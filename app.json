@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Sugar Blast",
+    "slug": "sugar-blast",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a0533"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sugarblast.game"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a0533"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.sugarblast.game"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": []
+  }
+}
