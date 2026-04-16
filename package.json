@@ -10,15 +10,18 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.0.2",
+    "babel-preset-expo": "^55.0.16",
     "expo": "~54.0.33",
     "expo-av": "^16.0.8",
     "expo-haptics": "^55.0.13",
     "expo-linear-gradient": "^55.0.12",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
+    "react-dom": "^19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "^2.31.0",
-    "react-native-reanimated": "^4.3.0"
+    "react-native-reanimated": "^4.3.0",
+    "react-native-web": "^0.21.2"
   },
   "private": true
 }
