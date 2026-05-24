@@ -156,6 +156,9 @@ export default function GameScreen({
   const [crescendoFlash, setCrescendoFlash] = useState(null); // { color } | null
   const [chainBanner, setChainBanner] = useState(null); // { count } | null
   const chainStreakRef = useRef(0);
+  // Color Frenzy may fire at most once per user swap chain; otherwise the
+  // refilled board can re-roll into another 14+ color and loop forever.
+  const frenzyFiredRef = useRef(false);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -213,6 +216,7 @@ export default function GameScreen({
       const removingSet = new Set([target.id]);
       setRemovingIds(removingSet);
       tapHaptic();
+      frenzyFiredRef.current = false;
       (async () => {
         setBusy(true);
         await delay(MATCH_SHRINK_MS);
@@ -267,6 +271,7 @@ export default function GameScreen({
     setBusy(true);
     setSelectedCell(null);
     setHintCell(null);
+    frenzyFiredRef.current = false;
 
     const swapped = swapCells(grid, c1, r1, c2, r2);
     const { matched } = findMatches(swapped);
@@ -334,10 +339,15 @@ export default function GameScreen({
 
       // Color Frenzy: if any one color has accumulated to threshold, all of
       // them auto-detonate as stripes — board demolition moment.
-      const frenzy = detectColorFrenzy(currentGrid);
-      if (frenzy) {
-        await triggerColorFrenzy(currentGrid, frenzy);
-        return;
+      // Fires at most once per user swap; otherwise the random refill can
+      // re-trigger it indefinitely on most boards.
+      if (!frenzyFiredRef.current) {
+        const frenzy = detectColorFrenzy(currentGrid);
+        if (frenzy) {
+          frenzyFiredRef.current = true;
+          await triggerColorFrenzy(currentGrid, frenzy);
+          return;
+        }
       }
 
       if (!hasValidMoves(currentGrid)) {

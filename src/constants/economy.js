@@ -5,10 +5,14 @@ export const LIFE_REGEN_MS = 20 * 60 * 1000; // 20 min per life
 export const STARTER_COINS = 50;
 
 // Stimulant mechanics — keep the board feeling alive between user moves.
-export const FRENZY_THRESHOLD = 10;     // same-color count to trigger Color Frenzy
-export const FRENZY_COIN_BONUS = 80;    // coin bonus per frenzy event
-export const LUCKY_STRIPED_CHANCE = 0.06;  // % chance a freshly spawned candy is striped
-export const LUCKY_WRAPPED_CHANCE = 0.02;  // % chance a freshly spawned candy is wrapped
+// On a 9x9 board with 6 colors the expected per-color count is ~13.5, so the
+// threshold must sit above that average; otherwise frenzy triggers on dice
+// alone right after a refill. 14 means "this color built up well past random".
+export const FRENZY_THRESHOLD = 14;
+export const FRENZY_COIN_BONUS = 80;
+// Lucky drop chances per newly spawned candy — kept low so they read as gifts.
+export const LUCKY_STRIPED_CHANCE = 0.04;
+export const LUCKY_WRAPPED_CHANCE = 0.015;
 export const CHAIN_BONUS_THRESHOLD = 5; // consecutive valid swaps to spawn a free striped
 export const CRESCENDO_CASCADE_LEVEL = 4;
 
