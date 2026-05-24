@@ -8,8 +8,16 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { THEME } from '../constants/game';
+import HudBar from '../components/HudBar';
 
-export default function HomeScreen({ onPlay, onHowToPlay }) {
+export default function HomeScreen({
+  save,
+  onPlay,
+  onHowToPlay,
+  onOpenQuests,
+  onOpenShop,
+  onOpenAchievements,
+}) {
   return (
     <LinearGradient
       colors={['#4a1f8a', '#2d1b69', '#1a0533', '#0d021a']}
@@ -18,7 +26,6 @@ export default function HomeScreen({ onPlay, onHowToPlay }) {
     >
       <StatusBar barStyle="light-content" backgroundColor="#4a1f8a" />
 
-      {/* Background decorative elements */}
       <View style={styles.decorContainer}>
         {[...Array(12)].map((_, i) => (
           <View
@@ -38,6 +45,10 @@ export default function HomeScreen({ onPlay, onHowToPlay }) {
         ))}
       </View>
 
+      <View style={styles.hudWrap}>
+        <HudBar save={save} onTapCoins={onOpenShop} onTapLives={onOpenShop} />
+      </View>
+
       <View style={styles.content}>
         <View style={styles.titleContainer}>
           <Text style={styles.titleSugar}>Sugar</Text>
@@ -46,28 +57,20 @@ export default function HomeScreen({ onPlay, onHowToPlay }) {
         <Text style={styles.subtitle}>MATCH 3 PUZZLE</Text>
 
         <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.playButton}
-            activeOpacity={0.8}
-            onPress={onPlay}
-          >
-            <LinearGradient
-              colors={['#4cff50', '#00c853']}
-              style={styles.playButtonInner}
-            >
+          <TouchableOpacity style={styles.playButton} activeOpacity={0.8} onPress={onPlay}>
+            <LinearGradient colors={['#4cff50', '#00c853']} style={styles.playButtonInner}>
               <Text style={styles.playButtonText}>Play!</Text>
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            activeOpacity={0.8}
-            onPress={onHowToPlay}
-          >
-            <LinearGradient
-              colors={['#7c4dff', '#6200ea']}
-              style={styles.secondaryButtonInner}
-            >
+          <View style={styles.actionsRow}>
+            <ActionPill icon="📜" label="Quests" onPress={onOpenQuests} />
+            <ActionPill icon="🛒" label="Shop" onPress={onOpenShop} />
+            <ActionPill icon="🏆" label="Awards" onPress={onOpenAchievements} />
+          </View>
+
+          <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.8} onPress={onHowToPlay}>
+            <LinearGradient colors={['#7c4dff', '#6200ea']} style={styles.secondaryButtonInner}>
               <Text style={styles.secondaryButtonText}>How to Play</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -77,11 +80,18 @@ export default function HomeScreen({ onPlay, onHowToPlay }) {
   );
 }
 
+function ActionPill({ icon, label, onPress }) {
+  return (
+    <TouchableOpacity style={styles.pill} activeOpacity={0.75} onPress={onPress}>
+      <Text style={styles.pillIcon}>{icon}</Text>
+      <Text style={styles.pillLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   decorContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -90,8 +100,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: '#fff',
   },
+  hudWrap: {
+    paddingTop: 48,
+  },
   content: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   titleContainer: {
     alignItems: 'center',
@@ -123,7 +138,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 5,
-    marginBottom: 60,
+    marginBottom: 40,
   },
   buttonContainer: {
     alignItems: 'center',
@@ -148,6 +163,30 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#004d00',
     letterSpacing: 1,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  pillIcon: {
+    fontSize: 16,
+    marginRight: 6,
+  },
+  pillLabel: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 13,
   },
   secondaryButton: {
     borderRadius: 25,

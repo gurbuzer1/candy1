@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,8 +10,22 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { THEME } from '../constants/game';
 import { LEVELS } from '../constants/levels';
+import HudBar from '../components/HudBar';
 
-export default function LevelSelectScreen({ progress, onSelectLevel, onBack }) {
+export default function LevelSelectScreen({ save, onSelectLevel, onBack, onOpenShop }) {
+  const [noLivesFlash, setNoLivesFlash] = useState(false);
+  const noLives = (save?.lives ?? 5) <= 0;
+
+  function handleTap(num, unlocked) {
+    if (!unlocked) return;
+    if (noLives) {
+      setNoLivesFlash(true);
+      setTimeout(() => setNoLivesFlash(false), 1600);
+      return;
+    }
+    onSelectLevel(num);
+  }
+
   return (
     <LinearGradient
       colors={[THEME.bg2, THEME.bg1, THEME.bg3]}
@@ -19,19 +33,29 @@ export default function LevelSelectScreen({ progress, onSelectLevel, onBack }) {
     >
       <StatusBar barStyle="light-content" />
 
-      <View style={styles.header}>
+      <View style={styles.topRow}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Select Level</Text>
+        <View style={{ width: 44 }} />
       </View>
+
+      <HudBar save={save} onTapCoins={onOpenShop} onTapLives={onOpenShop} />
+
+      {noLivesFlash && (
+        <View style={styles.noLivesPill}>
+          <Text style={styles.noLivesText}>Out of lives — wait for regen or buy a refill</Text>
+        </View>
+      )}
 
       <ScrollView contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
         {LEVELS.map((level, i) => {
           const num = i + 1;
-          const unlocked = num <= progress.maxLevel;
-          const stars = progress.stars[num] || 0;
-          const isCurrent = num === progress.maxLevel;
+          const unlocked = num <= (save?.maxLevel || 1);
+          const stars = save?.stars?.[num] || 0;
+          const isCurrent = num === (save?.maxLevel || 1);
+          const dimmed = unlocked && noLives;
 
           return (
             <TouchableOpacity
@@ -40,10 +64,10 @@ export default function LevelSelectScreen({ progress, onSelectLevel, onBack }) {
                 styles.levelBtn,
                 unlocked && styles.levelUnlocked,
                 isCurrent && styles.levelCurrent,
-                !unlocked && styles.levelLocked,
+                dimmed && styles.levelDimmed,
               ]}
               activeOpacity={unlocked ? 0.7 : 1}
-              onPress={() => unlocked && onSelectLevel(num)}
+              onPress={() => handleTap(num, unlocked)}
             >
               <LinearGradient
                 colors={
@@ -55,17 +79,12 @@ export default function LevelSelectScreen({ progress, onSelectLevel, onBack }) {
                 }
                 style={styles.levelBtnGradient}
               >
-                <Text
-                  style={[
-                    styles.levelNum,
-                    !unlocked && styles.levelNumLocked,
-                  ]}
-                >
+                <Text style={[styles.levelNum, !unlocked && styles.levelNumLocked]}>
                   {unlocked ? num : '🔒'}
                 </Text>
                 {unlocked && (
                   <View style={styles.starsRow}>
-                    {[1, 2, 3].map(s => (
+                    {[1, 2, 3].map((s) => (
                       <Text
                         key={s}
                         style={[
@@ -90,13 +109,14 @@ export default function LevelSelectScreen({ progress, onSelectLevel, onBack }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 50,
+    paddingTop: 48,
   },
-  header: {
+  topRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 6,
   },
   backButton: {
     width: 44,
@@ -107,21 +127,34 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.25)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
   },
   backText: {
     fontSize: 22,
     color: '#fff',
   },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '900',
     color: '#fff',
+  },
+  noLivesPill: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255, 71, 87, 0.95)',
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  noLivesText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 12,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: 16,
+    paddingTop: 14,
     paddingBottom: 40,
   },
   levelBtn: {
@@ -150,7 +183,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 10,
   },
-  levelLocked: {},
+  levelDimmed: {
+    opacity: 0.5,
+  },
   levelNum: {
     fontSize: 18,
     fontWeight: '900',
