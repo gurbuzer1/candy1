@@ -34,6 +34,7 @@ import { tapHaptic, matchHaptic, specialHaptic, errorHaptic } from '../utils/hap
 import GameBoard from '../components/GameBoard';
 import ProgressBar from '../components/ProgressBar';
 import AnimatedBackground from '../components/AnimatedBackground';
+import LevelIntroOverlay from '../components/LevelIntroOverlay';
 
 const CASCADE_LABELS = ['', 'Sweet!', 'Tasty!', 'Delicious!', 'Sugar Rush!', 'INCREDIBLE!'];
 const CASCADE_COLORS = ['', '#ffd700', '#ff6bcb', '#ff4757', '#a855f7', '#00ff88'];
@@ -107,6 +108,8 @@ export default function GameScreen({
   const [activations, setActivations] = useState([]);
   const [scorePopups, setScorePopups] = useState([]);
   const [particleBursts, setParticleBursts] = useState([]);
+  const [showIntro, setShowIntro] = useState(true);
+  const [shakeTrigger, setShakeTrigger] = useState(0);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -260,6 +263,10 @@ export default function GameScreen({
     if (cascadeLevel > 0) {
       const labelIdx = Math.min(cascadeLevel, CASCADE_LABELS.length - 1);
       setCascadeLabel(CASCADE_LABELS[labelIdx]);
+    }
+    // Shake board on big cascades (Delicious! and beyond)
+    if (cascadeLevel >= 3) {
+      setShakeTrigger((n) => n + 1);
     }
 
     const specials = determineSpecials(matchGroups);
@@ -525,6 +532,7 @@ export default function GameScreen({
       )}
 
       <View style={styles.boardContainer}>
+        <ShakeContainer trigger={shakeTrigger}>
         <GameBoard
           grid={grid}
           selectedCell={selectedCell}
@@ -540,11 +548,17 @@ export default function GameScreen({
           onSwipe={handleSwipe}
           disabled={busy}
         />
+        </ShakeContainer>
       </View>
+
+      {showIntro && (
+        <LevelIntroOverlay levelNum={levelNum} onDone={() => setShowIntro(false)} />
+      )}
 
       {/* Level Complete Modal */}
       <Modal visible={showComplete} transparent animationType="fade">
         <View style={styles.modalOverlay}>
+          {showComplete && <CoinShower />}
           <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.modalContent}>
             <Text style={styles.modalTitle}>Level Complete!</Text>
             <View style={styles.starsRow}>
@@ -573,8 +587,9 @@ export default function GameScreen({
       {/* Level Failed Modal */}
       <Modal visible={showFailed} transparent animationType="fade">
         <View style={styles.modalOverlay}>
+          {showFailed && <FailFlash />}
           <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Out of Moves!</Text>
+            <ShakeText style={styles.modalTitle}>Out of Moves!</ShakeText>
             <Text style={styles.modalScore}>Score: {score.toLocaleString()}</Text>
             <Text style={styles.streakBroken}>Streak reset to 0</Text>
 
@@ -594,6 +609,23 @@ export default function GameScreen({
       </Modal>
     </LinearGradient>
   );
+}
+
+function ShakeContainer({ trigger, children }) {
+  const tx = useSharedValue(0);
+  useEffect(() => {
+    if (trigger > 0) {
+      tx.value = withSequence(
+        withTiming(-12, { duration: 55, easing: Easing.out(Easing.quad) }),
+        withTiming(11, { duration: 55, easing: Easing.out(Easing.quad) }),
+        withTiming(-7, { duration: 55, easing: Easing.out(Easing.quad) }),
+        withTiming(6, { duration: 55, easing: Easing.out(Easing.quad) }),
+        withTiming(0, { duration: 70, easing: Easing.out(Easing.cubic) }),
+      );
+    }
+  }, [trigger]);
+  const style = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+  return <Animated.View style={style}>{children}</Animated.View>;
 }
 
 function CascadeLabel({ text, color }) {
@@ -697,6 +729,103 @@ function AnimatedStar({ index, earned }) {
       ★
     </Animated.Text>
   );
+}
+
+function CoinShower() {
+  const COIN_COUNT = 14;
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {Array.from({ length: COIN_COUNT }, (_, i) => (
+        <FallingCoin key={i} index={i} total={COIN_COUNT} />
+      ))}
+    </View>
+  );
+}
+
+function FallingCoin({ index, total }) {
+  const ty = useSharedValue(-60);
+  const tx = useSharedValue(0);
+  const rotate = useSharedValue(0);
+  const opacity = useSharedValue(0);
+
+  const xPct = (index / total) * 100 + ((index * 1297) % 17) - 8;
+  const delayMs = (index * 70) % 900;
+  const dur = 1800 + ((index * 53) % 600);
+
+  useEffect(() => {
+    opacity.value = withDelay(
+      delayMs,
+      withSequence(
+        withTiming(1, { duration: 160 }),
+        withDelay(dur - 400, withTiming(0, { duration: 240 })),
+      ),
+    );
+    ty.value = withDelay(
+      delayMs,
+      withTiming(900, { duration: dur, easing: Easing.in(Easing.cubic) }),
+    );
+    tx.value = withDelay(
+      delayMs,
+      withTiming(((index * 173) % 80) - 40, { duration: dur, easing: Easing.inOut(Easing.cubic) }),
+    );
+    rotate.value = withDelay(
+      delayMs,
+      withTiming(720, { duration: dur, easing: Easing.linear }),
+    );
+  }, []);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [
+      { translateX: tx.value },
+      { translateY: ty.value },
+      { rotate: `${rotate.value}deg` },
+    ],
+  }));
+
+  return (
+    <Animated.Text
+      style={[
+        styles.fallingCoin,
+        { left: `${xPct}%` },
+        animStyle,
+      ]}
+    >
+      🪙
+    </Animated.Text>
+  );
+}
+
+function FailFlash() {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withSequence(
+      withTiming(0.45, { duration: 140, easing: Easing.out(Easing.cubic) }),
+      withTiming(0, { duration: 420, easing: Easing.in(Easing.cubic) }),
+    );
+  }, []);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { backgroundColor: '#ff4757' }, style]}
+    />
+  );
+}
+
+function ShakeText({ children, style }) {
+  const tx = useSharedValue(0);
+  useEffect(() => {
+    tx.value = withSequence(
+      withTiming(-10, { duration: 60 }),
+      withTiming(10, { duration: 60 }),
+      withTiming(-6, { duration: 60 }),
+      withTiming(5, { duration: 60 }),
+      withTiming(0, { duration: 70 }),
+    );
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+  return <Animated.Text style={[style, animStyle]}>{children}</Animated.Text>;
 }
 
 function delay(ms) {
@@ -814,6 +943,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  fallingCoin: {
+    position: 'absolute',
+    top: -50,
+    fontSize: 28,
   },
   modalContent: {
     width: '84%',
