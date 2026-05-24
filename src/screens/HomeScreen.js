@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,15 @@ import {
   StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSequence,
+  withDelay,
+  withRepeat,
+  Easing,
+} from 'react-native-reanimated';
 import { THEME } from '../constants/game';
 import HudBar from '../components/HudBar';
 import AnimatedBackground from '../components/AnimatedBackground';
@@ -36,17 +45,13 @@ export default function HomeScreen({
 
       <View style={styles.content}>
         <View style={styles.titleContainer}>
-          <Text style={styles.titleSugar}>Sugar</Text>
-          <Text style={styles.titleBlast}>Blast</Text>
+          <BounceTitle delayMs={120} style={styles.titleSugar}>Sugar</BounceTitle>
+          <BounceTitle delayMs={300} style={styles.titleBlast}>Blast</BounceTitle>
         </View>
-        <Text style={styles.subtitle}>MATCH 3 PUZZLE</Text>
+        <FadeInText delayMs={520} style={styles.subtitle}>MATCH 3 PUZZLE</FadeInText>
 
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.playButton} activeOpacity={0.8} onPress={onPlay}>
-            <LinearGradient colors={['#4cff50', '#00c853']} style={styles.playButtonInner}>
-              <Text style={styles.playButtonText}>Play!</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+          <BreathingPlayButton onPress={onPlay} />
 
           <View style={styles.actionsRow}>
             <ActionPill icon="📜" label="Quests" onPress={onOpenQuests} />
@@ -62,6 +67,79 @@ export default function HomeScreen({
         </View>
       </View>
     </LinearGradient>
+  );
+}
+
+function BounceTitle({ children, delayMs, style }) {
+  const scale = useSharedValue(0.2);
+  const opacity = useSharedValue(0);
+  const ty = useSharedValue(-24);
+
+  useEffect(() => {
+    scale.value = withDelay(
+      delayMs,
+      withSequence(
+        withTiming(1.18, { duration: 360, easing: Easing.out(Easing.back(1.8)) }),
+        withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) }),
+      ),
+    );
+    opacity.value = withDelay(delayMs, withTiming(1, { duration: 280 }));
+    ty.value = withDelay(delayMs, withTiming(0, { duration: 380, easing: Easing.out(Easing.back(1.5)) }));
+  }, []);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: ty.value }, { scale: scale.value }],
+  }));
+
+  return <Animated.Text style={[style, animStyle]}>{children}</Animated.Text>;
+}
+
+function FadeInText({ children, delayMs, style }) {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withDelay(delayMs, withTiming(1, { duration: 420 }));
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.Text style={[style, animStyle]}>{children}</Animated.Text>;
+}
+
+function BreathingPlayButton({ onPress }) {
+  const scale = useSharedValue(0.7);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    opacity.value = withDelay(620, withTiming(1, { duration: 300 }));
+    scale.value = withDelay(
+      620,
+      withSequence(
+        withTiming(1.08, { duration: 340, easing: Easing.out(Easing.back(1.6)) }),
+        withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        withRepeat(
+          withSequence(
+            withTiming(1.03, { duration: 1100, easing: Easing.inOut(Easing.cubic) }),
+            withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.cubic) }),
+          ),
+          -1,
+          true,
+        ),
+      ),
+    );
+  }, []);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <Animated.View style={animStyle}>
+      <TouchableOpacity style={styles.playButton} activeOpacity={0.85} onPress={onPress}>
+        <LinearGradient colors={['#4cff50', '#00c853']} style={styles.playButtonInner}>
+          <Text style={styles.playButtonText}>Play!</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 

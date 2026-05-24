@@ -106,6 +106,7 @@ export default function GameScreen({
   const [hammerActive, setHammerActive] = useState(false);
   const [activations, setActivations] = useState([]);
   const [scorePopups, setScorePopups] = useState([]);
+  const [particleBursts, setParticleBursts] = useState([]);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -198,6 +199,9 @@ export default function GameScreen({
   }, []);
   const removePopup = useCallback((id) => {
     setScorePopups((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+  const removeBurst = useCallback((id) => {
+    setParticleBursts((prev) => prev.filter((b) => b.id !== id));
   }, []);
 
   const handleSwipe = useCallback((col, row, dirCol, dirRow) => {
@@ -307,23 +311,31 @@ export default function GameScreen({
     scoreRef.current = newScore;
     setScore(newScore);
 
-    // Score popups at each match group center
+    // Score popups + particle bursts at each match group center
     const cascadeMult = Math.pow(1.5, cascadeLevel);
-    const newPopups = matchGroups.map((g, gi) => {
+    const newPopups = [];
+    const newBursts = [];
+    matchGroups.forEach((g, gi) => {
       const center = g.cells[Math.floor(g.cells.length / 2)];
-      const base =
-        g.cells.length >= 5 ? 200 : g.cells.length === 4 ? 120 : 60;
-      return {
-        id: `pop_${Date.now()}_${gi}_${center.col}_${center.row}`,
+      const base = g.cells.length >= 5 ? 200 : g.cells.length === 4 ? 120 : 60;
+      const color = CANDY_COLORS[g.type]?.bg || '#fff';
+      const stamp = `${Date.now()}_${gi}_${center.col}_${center.row}`;
+      newPopups.push({
+        id: `pop_${stamp}`,
         x: center.col * CELL_SIZE + (CELL_SIZE - 40) / 2,
         y: center.row * CELL_SIZE + CELL_SIZE / 2 - 10,
         score: Math.floor(base * cascadeMult),
-        color: CANDY_COLORS[g.type]?.bg || '#fff',
-      };
+        color,
+      });
+      newBursts.push({
+        id: `b_${stamp}`,
+        x: center.col * CELL_SIZE + CELL_SIZE / 2,
+        y: center.row * CELL_SIZE + CELL_SIZE / 2,
+        color,
+      });
     });
-    if (newPopups.length > 0) {
-      setScorePopups((prev) => [...prev, ...newPopups]);
-    }
+    if (newPopups.length > 0) setScorePopups((prev) => [...prev, ...newPopups]);
+    if (newBursts.length > 0) setParticleBursts((prev) => [...prev, ...newBursts]);
 
     matchHaptic();
     if (specials.length > 0) specialHaptic();
@@ -520,8 +532,10 @@ export default function GameScreen({
           removingIds={removingIds}
           activations={activations}
           scorePopups={scorePopups}
+          particleBursts={particleBursts}
           onActivationDone={removeActivation}
           onPopupDone={removePopup}
+          onBurstDone={removeBurst}
           onCellTap={handleCellTap}
           onSwipe={handleSwipe}
           disabled={busy}

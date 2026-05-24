@@ -8,6 +8,7 @@ import {
 import CandyCell from './CandyCell';
 import SpecialActivationFX from './SpecialActivationFX';
 import ScorePopup from './ScorePopup';
+import ParticleBurst from './ParticleBurst';
 
 const EMPTY_SET = new Set();
 const EMPTY_ARR = [];
@@ -19,8 +20,10 @@ export default function GameBoard({
   removingIds = EMPTY_SET,
   activations = EMPTY_ARR,
   scorePopups = EMPTY_ARR,
+  particleBursts = EMPTY_ARR,
   onActivationDone,
   onPopupDone,
+  onBurstDone,
   onCellTap,
   onSwipe,
   disabled,
@@ -115,6 +118,18 @@ export default function GameBoard({
               key={a.id}
               activation={a}
               onDone={onActivationDone}
+            />
+          ))}
+
+          {/* Particle bursts on every match */}
+          {particleBursts.map((b) => (
+            <ParticleBurst
+              key={b.id}
+              id={b.id}
+              x={b.x}
+              y={b.y}
+              color={b.color}
+              onDone={onBurstDone}
             />
           ))}
 
