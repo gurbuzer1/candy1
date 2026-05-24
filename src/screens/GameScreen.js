@@ -8,8 +8,17 @@ import {
   Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSequence,
+  withRepeat,
+  withDelay,
+  Easing,
+} from 'react-native-reanimated';
 import {
-  COLS, ROWS, THEME, SPECIAL,
+  COLS, ROWS, CELL_SIZE, CANDY_SIZE, THEME, SPECIAL, CANDY_COLORS,
 } from '../constants/game';
 import { LEVELS } from '../constants/levels';
 import {
@@ -94,6 +103,8 @@ export default function GameScreen({
   const [coinBreakdown, setCoinBreakdown] = useState(null);
   const [removingIds, setRemovingIds] = useState(EMPTY_SET);
   const [hammerActive, setHammerActive] = useState(false);
+  const [activations, setActivations] = useState([]);
+  const [scorePopups, setScorePopups] = useState([]);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -181,6 +192,13 @@ export default function GameScreen({
     }
   }, [selectedCell, busy, grid, hammerActive]);
 
+  const removeActivation = useCallback((id) => {
+    setActivations((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+  const removePopup = useCallback((id) => {
+    setScorePopups((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
   const handleSwipe = useCallback((col, row, dirCol, dirRow) => {
     if (busy) return;
     const targetCol = col + dirCol;
@@ -240,6 +258,27 @@ export default function GameScreen({
     }
 
     const specials = determineSpecials(matchGroups);
+
+    // Detect already-existing specials in the matched set — these activate
+    // (beam / shock ring / flash) before the candies actually shrink.
+    const newActivations = [];
+    matched.forEach((key) => {
+      const [c, r] = key.split(',').map(Number);
+      const candy = currentGrid[c]?.[r];
+      if (candy && candy.special !== SPECIAL.NONE) {
+        newActivations.push({
+          id: `act_${Date.now()}_${c}_${r}_${Math.random().toString(36).slice(2, 6)}`,
+          col: c,
+          row: r,
+          special: candy.special,
+          type: candy.type,
+        });
+      }
+    });
+    if (newActivations.length > 0) {
+      setActivations((prev) => [...prev, ...newActivations]);
+    }
+
     const extraRemovals = getSpecialRemovals(currentGrid, matched);
     extraRemovals.forEach((key) => matched.add(key));
 
@@ -266,6 +305,24 @@ export default function GameScreen({
     const newScore = scoreRef.current + points;
     scoreRef.current = newScore;
     setScore(newScore);
+
+    // Score popups at each match group center
+    const cascadeMult = Math.pow(1.5, cascadeLevel);
+    const newPopups = matchGroups.map((g, gi) => {
+      const center = g.cells[Math.floor(g.cells.length / 2)];
+      const base =
+        g.cells.length >= 5 ? 200 : g.cells.length === 4 ? 120 : 60;
+      return {
+        id: `pop_${Date.now()}_${gi}_${center.col}_${center.row}`,
+        x: center.col * CELL_SIZE + (CELL_SIZE - 40) / 2,
+        y: center.row * CELL_SIZE + CELL_SIZE / 2 - 10,
+        score: Math.floor(base * cascadeMult),
+        color: CANDY_COLORS[g.type]?.bg || '#fff',
+      };
+    });
+    if (newPopups.length > 0) {
+      setScorePopups((prev) => [...prev, ...newPopups]);
+    }
 
     matchHaptic();
     if (specials.length > 0) specialHaptic();
@@ -440,16 +497,16 @@ export default function GameScreen({
       </View>
 
       {cascadeLabel !== '' && (
-        <View style={styles.cascadeContainer}>
-          <Text style={[styles.cascadeText, {
-            color: CASCADE_COLORS[Math.min(
+        <CascadeLabel
+          key={cascadeLabel}
+          text={cascadeLabel}
+          color={
+            CASCADE_COLORS[Math.min(
               CASCADE_LABELS.indexOf(cascadeLabel),
               CASCADE_COLORS.length - 1,
-            )] || '#ffd700',
-          }]}>
-            {cascadeLabel}
-          </Text>
-        </View>
+            )] || '#ffd700'
+          }
+        />
       )}
 
       <View style={styles.boardContainer}>
@@ -458,6 +515,10 @@ export default function GameScreen({
           selectedCell={selectedCell}
           hintCell={hintCell}
           removingIds={removingIds}
+          activations={activations}
+          scorePopups={scorePopups}
+          onActivationDone={removeActivation}
+          onPopupDone={removePopup}
           onCellTap={handleCellTap}
           onSwipe={handleSwipe}
           disabled={busy}
@@ -471,12 +532,7 @@ export default function GameScreen({
             <Text style={styles.modalTitle}>Level Complete!</Text>
             <View style={styles.starsRow}>
               {[1, 2, 3].map((s) => (
-                <Text
-                  key={s}
-                  style={[styles.modalStar, s <= earnedStars && styles.modalStarEarned]}
-                >
-                  ★
-                </Text>
+                <AnimatedStar key={s} index={s} earned={s <= earnedStars} />
               ))}
             </View>
             <Text style={styles.modalScore}>Score: {score.toLocaleString()}</Text>
@@ -523,6 +579,36 @@ export default function GameScreen({
   );
 }
 
+function CascadeLabel({ text, color }) {
+  const scale = useSharedValue(0);
+  const opacity = useSharedValue(0);
+  const rotate = useSharedValue(-14);
+
+  useEffect(() => {
+    scale.value = withSequence(
+      withTiming(1.3, { duration: 180, easing: Easing.out(Easing.cubic) }),
+      withTiming(1, { duration: 110 }),
+    );
+    opacity.value = withSequence(
+      withTiming(1, { duration: 160 }),
+      withTiming(1, { duration: 350 }),
+      withTiming(0, { duration: 220 }),
+    );
+    rotate.value = withTiming(0, { duration: 240, easing: Easing.out(Easing.back(1.8)) });
+  }, []);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }, { rotate: `${rotate.value}deg` }],
+  }));
+
+  return (
+    <Animated.View style={[styles.cascadeContainer, animStyle]} pointerEvents="none">
+      <Text style={[styles.cascadeText, { color }]}>{text}</Text>
+    </Animated.View>
+  );
+}
+
 function CoinBreakdownView({ b }) {
   return (
     <View style={styles.breakdown}>
@@ -533,7 +619,7 @@ function CoinBreakdownView({ b }) {
       )}
       <View style={styles.breakdownTotal}>
         <Text style={styles.breakdownTotalLabel}>Total</Text>
-        <Text style={styles.breakdownTotalValue}>🪙 {b.total}</Text>
+        <Text style={styles.breakdownTotalValue}>🪙 <AnimatedCounter target={b.total} /></Text>
       </View>
     </View>
   );
@@ -545,6 +631,54 @@ function BreakdownRow({ label, value }) {
       <Text style={styles.breakdownLabel}>{label}</Text>
       <Text style={styles.breakdownValue}>+🪙 {value}</Text>
     </View>
+  );
+}
+
+function AnimatedCounter({ target, duration = 700 }) {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    if (target <= 0) {
+      setDisplay(0);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const t = Math.min(1, (Date.now() - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(Math.floor(target * eased));
+      if (t >= 1) clearInterval(id);
+    }, 40);
+    return () => clearInterval(id);
+  }, [target, duration]);
+  return <>{display}</>;
+}
+
+function AnimatedStar({ index, earned }) {
+  const scale = useSharedValue(earned ? 0 : 1);
+  const opacity = useSharedValue(earned ? 0 : 0.25);
+
+  useEffect(() => {
+    if (!earned) return;
+    const delay = (index - 1) * 220;
+    scale.value = withDelay(
+      delay,
+      withSequence(
+        withTiming(1.55, { duration: 240, easing: Easing.out(Easing.back(2)) }),
+        withTiming(1, { duration: 160, easing: Easing.out(Easing.cubic) }),
+      ),
+    );
+    opacity.value = withDelay(delay, withTiming(1, { duration: 220 }));
+  }, [earned, index]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.Text style={[styles.modalStar, earned && styles.modalStarEarned, style]}>
+      ★
+    </Animated.Text>
   );
 }
 

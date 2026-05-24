@@ -6,14 +6,21 @@ import {
   COLS, ROWS, CELL_SIZE, BOARD_WIDTH, BOARD_HEIGHT, THEME,
 } from '../constants/game';
 import CandyCell from './CandyCell';
+import SpecialActivationFX from './SpecialActivationFX';
+import ScorePopup from './ScorePopup';
 
 const EMPTY_SET = new Set();
+const EMPTY_ARR = [];
 
 export default function GameBoard({
   grid,
   selectedCell,
   hintCell,
   removingIds = EMPTY_SET,
+  activations = EMPTY_ARR,
+  scorePopups = EMPTY_ARR,
+  onActivationDone,
+  onPopupDone,
   onCellTap,
   onSwipe,
   disabled,
@@ -70,18 +77,6 @@ export default function GameBoard({
         <View style={styles.board}>
           <BoardBackground />
 
-          {selectedCell && (
-            <View
-              style={[
-                styles.selectionHighlight,
-                {
-                  left: selectedCell.col * CELL_SIZE,
-                  top: selectedCell.row * CELL_SIZE,
-                },
-              ]}
-            />
-          )}
-
           {hintCell && (
             <View
               style={[
@@ -113,6 +108,27 @@ export default function GameBoard({
               );
             }),
           )}
+
+          {/* Special activation FX (beams / shock rings / flash) */}
+          {activations.map((a) => (
+            <SpecialActivationFX
+              key={a.id}
+              activation={a}
+              onDone={onActivationDone}
+            />
+          ))}
+
+          {/* Score popups */}
+          {scorePopups.map((p) => (
+            <ScorePopup
+              key={p.id}
+              score={p.score}
+              x={p.x}
+              y={p.y}
+              color={p.color}
+              onDone={() => onPopupDone && onPopupDone(p.id)}
+            />
+          ))}
         </View>
       </GestureDetector>
     </View>

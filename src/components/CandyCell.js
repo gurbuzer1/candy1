@@ -7,6 +7,7 @@ import Animated, {
   withSpring,
   withSequence,
   withDelay,
+  withRepeat,
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
@@ -26,20 +27,19 @@ function CandyCell({ candy, col, row, isSelected, isRemoving, onRemoved }) {
   const baseLeft = col * CELL_SIZE + (CELL_SIZE - CANDY_SIZE) / 2;
   const baseTop = row * CELL_SIZE + (CELL_SIZE - CANDY_SIZE) / 2;
 
-  // Position offset relative to base (animates to 0 after grid changes).
   const tx = useSharedValue(0);
   const ty = useSharedValue(-CELL_SIZE * (row + 1.5));
-
-  // Life-cycle scale: 0 on removal, 1 active. Multiplied with selection scale.
   const scaleLife = useSharedValue(1);
   const scaleSelect = useSharedValue(1);
   const opacity = useSharedValue(1);
+  const haloOpacity = useSharedValue(0);
+  const haloScale = useSharedValue(1);
 
   const prevColRef = useRef(col);
   const prevRowRef = useRef(row);
   const isFirstMountRef = useRef(true);
 
-  // Entrance + position-change animation.
+  // Entrance + position-change
   useEffect(() => {
     if (isFirstMountRef.current) {
       ty.value = withSpring(0, SPRING_FALL);
@@ -58,12 +58,34 @@ function CandyCell({ candy, col, row, isSelected, isRemoving, onRemoved }) {
     prevRowRef.current = row;
   }, [col, row]);
 
-  // Selection pop.
+  // Selection: scale pulse + halo
   useEffect(() => {
-    scaleSelect.value = withSpring(isSelected ? 1.14 : 1, SPRING_SELECT);
+    if (isSelected) {
+      scaleSelect.value = withRepeat(
+        withSequence(
+          withTiming(1.16, { duration: 380, easing: Easing.inOut(Easing.cubic) }),
+          withTiming(1.06, { duration: 380, easing: Easing.inOut(Easing.cubic) }),
+        ),
+        -1,
+        true,
+      );
+      haloOpacity.value = withTiming(0.55, { duration: 200 });
+      haloScale.value = withRepeat(
+        withSequence(
+          withTiming(1.45, { duration: 600, easing: Easing.inOut(Easing.cubic) }),
+          withTiming(1.2, { duration: 600, easing: Easing.inOut(Easing.cubic) }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      scaleSelect.value = withSpring(1, SPRING_SELECT);
+      haloOpacity.value = withTiming(0, { duration: 180 });
+      haloScale.value = withTiming(1, { duration: 180 });
+    }
   }, [isSelected]);
 
-  // Removal pop-then-shrink.
+  // Removal
   useEffect(() => {
     if (isRemoving) {
       scaleLife.value = withSequence(
@@ -88,25 +110,64 @@ function CandyCell({ candy, col, row, isSelected, isRemoving, onRemoved }) {
     opacity: opacity.value,
   }));
 
+  const haloStyle = useAnimatedStyle(() => ({
+    opacity: haloOpacity.value,
+    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: haloScale.value }],
+  }));
+
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        { left: baseLeft, top: baseTop },
-        animStyle,
-      ]}
-    >
-      {isColorBomb ? (
-        <ColorBombCandy />
-      ) : (
-        <RegularCandy colors={colors} special={candy.special} />
-      )}
-    </Animated.View>
+    <>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.halo,
+          {
+            left: baseLeft - CANDY_SIZE * 0.2,
+            top: baseTop - CANDY_SIZE * 0.2,
+            backgroundColor: colors?.glow || 'rgba(255,255,255,0.4)',
+            shadowColor: colors?.bg || '#fff',
+          },
+          haloStyle,
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.container,
+          { left: baseLeft, top: baseTop },
+          animStyle,
+        ]}
+      >
+        {isColorBomb ? (
+          <ColorBombCandy />
+        ) : (
+          <RegularCandy colors={colors} special={candy.special} />
+        )}
+      </Animated.View>
+    </>
   );
 }
 
 function RegularCandy({ colors, special }) {
-  return (
+  const breathe = useSharedValue(1);
+
+  useEffect(() => {
+    if (special === SPECIAL.WRAPPED) {
+      breathe.value = withRepeat(
+        withSequence(
+          withTiming(1.04, { duration: 700, easing: Easing.inOut(Easing.cubic) }),
+          withTiming(0.97, { duration: 700, easing: Easing.inOut(Easing.cubic) }),
+        ),
+        -1,
+        true,
+      );
+    }
+  }, [special]);
+
+  const breatheStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: breathe.value }],
+  }));
+
+  const inner = (
     <View
       style={[
         styles.candy,
@@ -124,6 +185,11 @@ function RegularCandy({ colors, special }) {
       {special === SPECIAL.WRAPPED && <WrappedOverlay />}
     </View>
   );
+
+  if (special === SPECIAL.WRAPPED) {
+    return <Animated.View style={breatheStyle}>{inner}</Animated.View>;
+  }
+  return inner;
 }
 
 function StripedOverlay({ horizontal }) {
@@ -158,17 +224,33 @@ function WrappedOverlay() {
 
 function ColorBombCandy() {
   const segments = ['#ff4757', '#ffa502', '#ffd32a', '#2ed573', '#1e90ff', '#a855f7'];
+  const spin = useSharedValue(0);
+
+  useEffect(() => {
+    spin.value = withRepeat(
+      withTiming(360, { duration: 4200, easing: Easing.linear }),
+      -1,
+      false,
+    );
+  }, []);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${spin.value}deg` }],
+  }));
+
   return (
     <View style={styles.colorBomb}>
-      {segments.map((color, i) => (
-        <View
-          key={i}
-          style={[
-            styles.colorSegment,
-            { backgroundColor: color, transform: [{ rotate: `${i * 60}deg` }] },
-          ]}
-        />
-      ))}
+      <Animated.View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }, style]}>
+        {segments.map((color, i) => (
+          <View
+            key={i}
+            style={[
+              styles.colorSegment,
+              { backgroundColor: color, transform: [{ rotate: `${i * 60}deg` }] },
+            ]}
+          />
+        ))}
+      </Animated.View>
       <View style={styles.colorBombCenter} />
     </View>
   );
@@ -180,6 +262,16 @@ const styles = StyleSheet.create({
     width: CANDY_SIZE,
     height: CANDY_SIZE,
     zIndex: 2,
+  },
+  halo: {
+    position: 'absolute',
+    width: CANDY_SIZE * 1.4,
+    height: CANDY_SIZE * 1.4,
+    borderRadius: CANDY_SIZE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+    zIndex: 1,
   },
   candy: {
     width: CANDY_SIZE,
