@@ -33,6 +33,7 @@ import { computeStars } from '../utils/storage';
 import { tapHaptic, matchHaptic, specialHaptic, errorHaptic } from '../utils/haptics';
 import GameBoard from '../components/GameBoard';
 import ProgressBar from '../components/ProgressBar';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 const CASCADE_LABELS = ['', 'Sweet!', 'Tasty!', 'Delicious!', 'Sugar Rush!', 'INCREDIBLE!'];
 const CASCADE_COLORS = ['', '#ffd700', '#ff6bcb', '#ff4757', '#a855f7', '#00ff88'];
@@ -442,6 +443,8 @@ export default function GameScreen({
       style={styles.container}
     >
       <StatusBar barStyle="light-content" />
+
+      <AnimatedBackground />
 
       <View style={styles.hud}>
         <TouchableOpacity style={styles.backBtn} onPress={onBack}>

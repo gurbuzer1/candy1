@@ -11,6 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { THEME } from '../constants/game';
 import { LEVELS } from '../constants/levels';
 import HudBar from '../components/HudBar';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 export default function LevelSelectScreen({ save, onSelectLevel, onBack, onOpenShop }) {
   const [noLivesFlash, setNoLivesFlash] = useState(false);
@@ -32,6 +33,8 @@ export default function LevelSelectScreen({ save, onSelectLevel, onBack, onOpenS
       style={styles.container}
     >
       <StatusBar barStyle="light-content" />
+
+      <AnimatedBackground />
 
       <View style={styles.topRow}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>

@@ -9,6 +9,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { THEME } from '../constants/game';
 import HudBar from '../components/HudBar';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 export default function HomeScreen({
   save,
@@ -26,24 +27,8 @@ export default function HomeScreen({
     >
       <StatusBar barStyle="light-content" backgroundColor="#4a1f8a" />
 
-      <View style={styles.decorContainer}>
-        {[...Array(12)].map((_, i) => (
-          <View
-            key={i}
-            style={[
-              styles.decorDot,
-              {
-                left: `${(i * 23) % 100}%`,
-                top: `${(i * 17 + 10) % 80}%`,
-                width: 4 + (i % 3) * 3,
-                height: 4 + (i % 3) * 3,
-                borderRadius: 6,
-                opacity: 0.1 + (i % 4) * 0.05,
-              },
-            ]}
-          />
-        ))}
-      </View>
+      <AnimatedBackground />
+
 
       <View style={styles.hudWrap}>
         <HudBar save={save} onTapCoins={onOpenShop} onTapLives={onOpenShop} />

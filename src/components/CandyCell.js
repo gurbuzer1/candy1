@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -180,6 +180,7 @@ function RegularCandy({ colors, special }) {
     >
       <View style={[styles.highlight, { backgroundColor: colors.highlight }]} />
       <View style={styles.shineDot} />
+      <SignatureIcon shape={colors.shape} />
       {special === SPECIAL.STRIPED_H && <StripedOverlay horizontal />}
       {special === SPECIAL.STRIPED_V && <StripedOverlay horizontal={false} />}
       {special === SPECIAL.WRAPPED && <WrappedOverlay />}
@@ -190,6 +191,55 @@ function RegularCandy({ colors, special }) {
     return <Animated.View style={breatheStyle}>{inner}</Animated.View>;
   }
   return inner;
+}
+
+// Per-color signature shape — gives instant recognition without changing footprint.
+const ICON_SIZE = CANDY_SIZE * 0.4;
+function SignatureIcon({ shape }) {
+  // Centered slightly below the highlight band for visual balance.
+  const center = { top: CANDY_SIZE * 0.45, alignItems: 'center', justifyContent: 'center' };
+  switch (shape) {
+    case 'circle':
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <View style={[styles.iconCircle]} />
+        </View>
+      );
+    case 'diamond':
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <View style={[styles.iconDiamond]} />
+        </View>
+      );
+    case 'square':
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <View style={[styles.iconSquare]} />
+        </View>
+      );
+    case 'triangle':
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <View style={styles.iconTriangle} />
+        </View>
+      );
+    case 'hexagon':
+      // approximate with a plus sign for clarity at small sizes
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <View style={styles.iconPlusH} />
+          <View style={styles.iconPlusV} />
+        </View>
+      );
+    case 'star':
+      return (
+        <View style={[styles.iconWrap, center]}>
+          <Text style={styles.iconStar}>★</Text>
+        </View>
+      );
+    default:
+      return null;
+  }
 }
 
 function StripedOverlay({ horizontal }) {
@@ -301,6 +351,62 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: 'rgba(255,255,255,0.65)',
+  },
+  iconWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    transform: [{ translateY: -ICON_SIZE / 2 }],
+  },
+  iconCircle: {
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    borderRadius: ICON_SIZE / 2,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  iconDiamond: {
+    width: ICON_SIZE * 0.8,
+    height: ICON_SIZE * 0.8,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    transform: [{ rotate: '45deg' }],
+  },
+  iconSquare: {
+    width: ICON_SIZE * 0.78,
+    height: ICON_SIZE * 0.78,
+    borderRadius: ICON_SIZE * 0.18,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  iconTriangle: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: ICON_SIZE * 0.55,
+    borderRightWidth: ICON_SIZE * 0.55,
+    borderBottomWidth: ICON_SIZE * 0.95,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'rgba(255,255,255,0.85)',
+  },
+  iconPlusH: {
+    position: 'absolute',
+    width: ICON_SIZE,
+    height: ICON_SIZE * 0.32,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 2,
+  },
+  iconPlusV: {
+    position: 'absolute',
+    width: ICON_SIZE * 0.32,
+    height: ICON_SIZE,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 2,
+  },
+  iconStar: {
+    fontSize: ICON_SIZE * 1.15,
+    color: 'rgba(255,255,255,0.92)',
+    textShadowColor: 'rgba(0,0,0,0.25)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    lineHeight: ICON_SIZE * 1.15,
   },
   stripe: {
     position: 'absolute',
