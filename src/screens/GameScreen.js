@@ -470,11 +470,18 @@ export default function GameScreen({
           <Text style={styles.backBtnText}>←</Text>
         </TouchableOpacity>
 
-        <Text style={styles.levelLabel}>Level {levelNum}</Text>
+        <View style={styles.levelLabelWrap}>
+          <Text style={styles.levelLabel}>Level {levelNum}</Text>
+          {(save?.winStreak || 0) >= 3 && (
+            <StreakBadge count={save.winStreak} />
+          )}
+        </View>
 
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>SCORE</Text>
-          <Text style={styles.hudStatValue}>{score.toLocaleString()}</Text>
+          <Text style={styles.hudStatValue}>
+            <AnimatedHudScore value={score} />
+          </Text>
         </View>
 
         <View style={styles.hudStat}>
@@ -609,6 +616,60 @@ export default function GameScreen({
       </Modal>
     </LinearGradient>
   );
+}
+
+function StreakBadge({ count }) {
+  const scale = useSharedValue(0.6);
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    scale.value = withSequence(
+      withTiming(1.2, { duration: 220, easing: Easing.out(Easing.back(1.8)) }),
+      withTiming(1, { duration: 160 }),
+    );
+    opacity.value = withTiming(1, { duration: 220 });
+  }, [count]);
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }],
+  }));
+  const isLegendary = count >= 10;
+  const isUnstoppable = count >= 5;
+  return (
+    <Animated.View
+      style={[
+        styles.streakBadge,
+        isUnstoppable && styles.streakBadgeHot,
+        isLegendary && styles.streakBadgeLegend,
+        style,
+      ]}
+    >
+      <Text style={styles.streakText}>🔥 {count}</Text>
+    </Animated.View>
+  );
+}
+
+function AnimatedHudScore({ value }) {
+  const [display, setDisplay] = useState(value);
+  const fromRef = useRef(value);
+  useEffect(() => {
+    if (value === display) return;
+    const from = fromRef.current;
+    const to = value;
+    const start = Date.now();
+    const dur = 350;
+    const id = setInterval(() => {
+      const t = Math.min(1, (Date.now() - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const v = Math.round(from + (to - from) * eased);
+      setDisplay(v);
+      if (t >= 1) {
+        fromRef.current = to;
+        clearInterval(id);
+      }
+    }, 32);
+    return () => clearInterval(id);
+  }, [value]);
+  return <>{display.toLocaleString()}</>;
 }
 
 function ShakeContainer({ trigger, children }) {
@@ -858,10 +919,35 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#fff',
   },
+  levelLabelWrap: {
+    alignItems: 'center',
+  },
   levelLabel: {
     fontSize: 16,
     fontWeight: '800',
     color: THEME.accent,
+  },
+  streakBadge: {
+    marginTop: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 165, 2, 0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 165, 2, 0.6)',
+  },
+  streakBadgeHot: {
+    backgroundColor: 'rgba(255, 71, 87, 0.25)',
+    borderColor: 'rgba(255, 71, 87, 0.7)',
+  },
+  streakBadgeLegend: {
+    backgroundColor: 'rgba(255, 215, 0, 0.28)',
+    borderColor: 'rgba(255, 215, 0, 0.8)',
+  },
+  streakText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffd700',
   },
   hudStat: {
     alignItems: 'center',
