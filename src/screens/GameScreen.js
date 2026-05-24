@@ -23,6 +23,9 @@ import {
 import { LEVELS } from '../constants/levels';
 import {
   COIN_PER_STAR, CASCADE_COIN_BONUS, streakMultiplier,
+  FRENZY_THRESHOLD, FRENZY_COIN_BONUS,
+  LUCKY_STRIPED_CHANCE, LUCKY_WRAPPED_CHANCE,
+  CHAIN_BONUS_THRESHOLD, CRESCENDO_CASCADE_LEVEL,
 } from '../constants/economy';
 import {
   createBoard, swapCells, findMatches, determineSpecials,
@@ -35,6 +38,7 @@ import GameBoard from '../components/GameBoard';
 import ProgressBar from '../components/ProgressBar';
 import AnimatedBackground from '../components/AnimatedBackground';
 import LevelIntroOverlay from '../components/LevelIntroOverlay';
+import ColorFrenzyOverlay from '../components/ColorFrenzyOverlay';
 
 const CASCADE_LABELS = ['', 'Sweet!', 'Tasty!', 'Delicious!', 'Sugar Rush!', 'INCREDIBLE!'];
 const CASCADE_COLORS = ['', '#ffd700', '#ff6bcb', '#ff4757', '#a855f7', '#00ff88'];
@@ -46,6 +50,44 @@ const MATCH_SHRINK_MS = 300;
 const CASCADE_FALL_MS = 420;
 
 const COLOR_NAMES = ['clearRed', 'clearOrange', 'clearYellow', 'clearGreen', 'clearBlue', 'clearPurple'];
+
+// Find any color with at least FRENZY_THRESHOLD plain (non-special) candies.
+function detectColorFrenzy(grid) {
+  const cells = [[], [], [], [], [], []];
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS; r++) {
+      const candy = grid[c]?.[r];
+      if (candy && candy.special === SPECIAL.NONE && candy.type >= 0 && candy.type < 6) {
+        cells[candy.type].push({ col: c, row: r });
+      }
+    }
+  }
+  for (let t = 0; t < 6; t++) {
+    if (cells[t].length >= FRENZY_THRESHOLD) {
+      return { type: t, cells: cells[t] };
+    }
+  }
+  return null;
+}
+
+// Sprinkle freshly-spawned cells with random striped / wrapped specials.
+function applyLuckyDrops(grid, fallMap) {
+  if (!fallMap) return grid;
+  const out = grid.map((c) => c.slice());
+  fallMap.forEach((entry) => {
+    if (!entry.isNew) return;
+    const cell = out[entry.col]?.[entry.toRow];
+    if (!cell || cell.special !== SPECIAL.NONE) return;
+    const roll = Math.random();
+    if (roll < LUCKY_WRAPPED_CHANCE) {
+      out[entry.col][entry.toRow] = { ...cell, special: SPECIAL.WRAPPED };
+    } else if (roll < LUCKY_WRAPPED_CHANCE + LUCKY_STRIPED_CHANCE) {
+      const dir = Math.random() < 0.5 ? SPECIAL.STRIPED_H : SPECIAL.STRIPED_V;
+      out[entry.col][entry.toRow] = { ...cell, special: dir };
+    }
+  });
+  return out;
+}
 
 function applyPreGameBoosters(board, boosters) {
   const out = board.map((col) => col.slice());
@@ -110,6 +152,10 @@ export default function GameScreen({
   const [particleBursts, setParticleBursts] = useState([]);
   const [showIntro, setShowIntro] = useState(true);
   const [shakeTrigger, setShakeTrigger] = useState(0);
+  const [frenzyState, setFrenzyState] = useState(null); // { colorType, count } | null
+  const [crescendoFlash, setCrescendoFlash] = useState(null); // { color } | null
+  const [chainBanner, setChainBanner] = useState(null); // { count } | null
+  const chainStreakRef = useRef(0);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -170,7 +216,8 @@ export default function GameScreen({
       (async () => {
         setBusy(true);
         await delay(MATCH_SHRINK_MS);
-        const { grid: collapsed } = removeAndCollapse(grid, matchedSet);
+        let { grid: collapsed, fallMap } = removeAndCollapse(grid, matchedSet);
+        collapsed = applyLuckyDrops(collapsed, fallMap);
         setRemovingIds(EMPTY_SET);
         setGrid(collapsed);
         await delay(CASCADE_FALL_MS);
@@ -232,10 +279,20 @@ export default function GameScreen({
       movesRef.current = newMoves;
       setMovesLeft(newMoves);
 
+      // Chain bonus: increment valid-swap streak; at threshold, gift a striped.
+      chainStreakRef.current += 1;
+      if (chainStreakRef.current >= CHAIN_BONUS_THRESHOLD) {
+        chainStreakRef.current = 0;
+        await delay(SWAP_SETTLE_MS);
+        await triggerChainBonus(swapped);
+        return;
+      }
+
       await delay(SWAP_SETTLE_MS);
       await processCascade(swapped, 0);
     } else {
       errorHaptic();
+      chainStreakRef.current = 0;
       setGrid(swapped);
       await delay(SWAP_SETTLE_MS);
       setGrid(grid);
@@ -244,11 +301,45 @@ export default function GameScreen({
     }
   }
 
+  async function triggerChainBonus(currentGrid) {
+    // Drop a striped onto a random plain cell.
+    const candidates = [];
+    for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < ROWS; r++) {
+        const cell = currentGrid[c]?.[r];
+        if (cell && cell.special === SPECIAL.NONE) candidates.push({ c, r });
+      }
+    }
+    if (candidates.length > 0) {
+      const pick = candidates[Math.floor(Math.random() * candidates.length)];
+      const dir = Math.random() < 0.5 ? SPECIAL.STRIPED_H : SPECIAL.STRIPED_V;
+      const out = currentGrid.map((c) => c.slice());
+      out[pick.c][pick.r] = { ...out[pick.c][pick.r], special: dir, id: `chain_${Date.now()}` };
+      setGrid(out);
+      specialHaptic();
+      setChainBanner({ count: CHAIN_BONUS_THRESHOLD });
+      setTimeout(() => setChainBanner(null), 1400);
+      await delay(420);
+      await processCascade(out, 0);
+    } else {
+      await processCascade(currentGrid, 0);
+    }
+  }
+
   async function processCascade(currentGrid, cascadeLevel) {
     const { matched, matchGroups } = findMatches(currentGrid);
 
     if (matched.size === 0) {
       setCascadeLabel('');
+
+      // Color Frenzy: if any one color has accumulated to threshold, all of
+      // them auto-detonate as stripes — board demolition moment.
+      const frenzy = detectColorFrenzy(currentGrid);
+      if (frenzy) {
+        await triggerColorFrenzy(currentGrid, frenzy);
+        return;
+      }
+
       if (!hasValidMoves(currentGrid)) {
         const shuffled = shuffleBoard(currentGrid);
         setGrid(shuffled);
@@ -267,6 +358,11 @@ export default function GameScreen({
     // Shake board on big cascades (Delicious! and beyond)
     if (cascadeLevel >= 3) {
       setShakeTrigger((n) => n + 1);
+    }
+    // Cascade crescendo: full-screen tinted flash at very big cascades.
+    if (cascadeLevel >= CRESCENDO_CASCADE_LEVEL) {
+      setCrescendoFlash({ color: CASCADE_COLORS[Math.min(cascadeLevel, CASCADE_COLORS.length - 1)] });
+      setTimeout(() => setCrescendoFlash(null), 380);
     }
 
     const specials = determineSpecials(matchGroups);
@@ -357,7 +453,8 @@ export default function GameScreen({
 
     await delay(MATCH_SHRINK_MS);
 
-    let { grid: collapsed } = removeAndCollapse(currentGrid, matched);
+    let { grid: collapsed, fallMap } = removeAndCollapse(currentGrid, matched);
+    collapsed = applyLuckyDrops(collapsed, fallMap);
     if (specials.length > 0) {
       collapsed = placeSpecials(collapsed, specials);
     }
@@ -367,6 +464,69 @@ export default function GameScreen({
 
     await delay(CASCADE_FALL_MS);
     await processCascade(collapsed, cascadeLevel + 1);
+  }
+
+  async function triggerColorFrenzy(currentGrid, frenzy) {
+    setFrenzyState({ colorType: frenzy.type, count: frenzy.cells.length });
+    specialHaptic();
+
+    // Convert every plain cell of that color to a striped (random orientation).
+    const converted = currentGrid.map((c) => c.slice());
+    frenzy.cells.forEach(({ col, row }) => {
+      const cell = converted[col][row];
+      if (cell) {
+        const dir = Math.random() < 0.5 ? SPECIAL.STRIPED_H : SPECIAL.STRIPED_V;
+        converted[col][row] = { ...cell, special: dir };
+      }
+    });
+    setGrid(converted);
+
+    scoreRef.current += frenzy.cells.length * 80;
+    setScore(scoreRef.current);
+
+    await delay(520);
+
+    // Mark them all as matched and let getSpecialRemovals fan out via the
+    // freshly-applied stripe rules.
+    const frenzyMatched = new Set(frenzy.cells.map(({ col, row }) => `${col},${row}`));
+
+    const stamp = Date.now();
+    const newActs = frenzy.cells.map(({ col, row }, i) => {
+      const cell = converted[col][row];
+      return {
+        id: `actf_${stamp}_${i}`,
+        col,
+        row,
+        special: cell.special,
+        type: cell.type,
+      };
+    });
+    setActivations((prev) => [...prev, ...newActs]);
+
+    const extra = getSpecialRemovals(converted, frenzyMatched);
+    extra.forEach((k) => frenzyMatched.add(k));
+
+    scoreRef.current += frenzyMatched.size * 60;
+    setScore(scoreRef.current);
+
+    const idsToRemove = new Set();
+    frenzyMatched.forEach((key) => {
+      const [c, r] = key.split(',').map(Number);
+      const cell = converted[c]?.[r];
+      if (cell) idsToRemove.add(cell.id);
+    });
+    setRemovingIds(idsToRemove);
+    setShakeTrigger((n) => n + 1);
+
+    await delay(MATCH_SHRINK_MS);
+
+    let { grid: collapsed2, fallMap: fm2 } = removeAndCollapse(converted, frenzyMatched);
+    collapsed2 = applyLuckyDrops(collapsed2, fm2);
+    setRemovingIds(EMPTY_SET);
+    setGrid(collapsed2);
+
+    await delay(CASCADE_FALL_MS);
+    await processCascade(collapsed2, 0);
   }
 
   function checkEndConditions(currentGrid) {
@@ -562,6 +722,22 @@ export default function GameScreen({
         <LevelIntroOverlay levelNum={levelNum} onDone={() => setShowIntro(false)} />
       )}
 
+      {frenzyState && (
+        <ColorFrenzyOverlay
+          colorType={frenzyState.colorType}
+          count={frenzyState.count}
+          onDone={() => setFrenzyState(null)}
+        />
+      )}
+
+      {crescendoFlash && (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.crescendoLayer]}>
+          <CrescendoFlash color={crescendoFlash.color} />
+        </View>
+      )}
+
+      {chainBanner && <ChainBanner count={chainBanner.count} />}
+
       {/* Level Complete Modal */}
       <Modal visible={showComplete} transparent animationType="fade">
         <View style={styles.modalOverlay}>
@@ -615,6 +791,50 @@ export default function GameScreen({
         </View>
       </Modal>
     </LinearGradient>
+  );
+}
+
+function CrescendoFlash({ color }) {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withSequence(
+      withTiming(0.35, { duration: 110, easing: Easing.out(Easing.cubic) }),
+      withTiming(0, { duration: 260, easing: Easing.in(Easing.cubic) }),
+    );
+  }, []);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { backgroundColor: color || '#ffd700' }, style]}
+    />
+  );
+}
+
+function ChainBanner({ count }) {
+  const scale = useSharedValue(0.5);
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    scale.value = withSequence(
+      withTiming(1.2, { duration: 240, easing: Easing.out(Easing.back(1.8)) }),
+      withTiming(1, { duration: 160 }),
+    );
+    opacity.value = withSequence(
+      withTiming(1, { duration: 200 }),
+      withDelay(800, withTiming(0, { duration: 280 })),
+    );
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }],
+  }));
+  return (
+    <View style={styles.chainWrap} pointerEvents="none">
+      <Animated.View style={[styles.chainBox, animStyle]}>
+        <Text style={styles.chainLabel}>ON FIRE</Text>
+        <Text style={styles.chainSub}>chain ×{count} → free striped</Text>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -1034,6 +1254,46 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -50,
     fontSize: 28,
+  },
+  crescendoLayer: {
+    zIndex: 55,
+  },
+  chainWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 65,
+  },
+  chainBox: {
+    backgroundColor: 'rgba(20, 5, 40, 0.94)',
+    borderWidth: 2.5,
+    borderColor: '#ff4757',
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 18,
+    alignItems: 'center',
+    shadowColor: '#ff4757',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  chainLabel: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#ff4757',
+    letterSpacing: 4,
+  },
+  chainSub: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#b388ff',
+    marginTop: 3,
+    letterSpacing: 1.5,
   },
   modalContent: {
     width: '84%',

@@ -4,6 +4,14 @@ export const LIVES_MAX = 5;
 export const LIFE_REGEN_MS = 20 * 60 * 1000; // 20 min per life
 export const STARTER_COINS = 50;
 
+// Stimulant mechanics — keep the board feeling alive between user moves.
+export const FRENZY_THRESHOLD = 10;     // same-color count to trigger Color Frenzy
+export const FRENZY_COIN_BONUS = 80;    // coin bonus per frenzy event
+export const LUCKY_STRIPED_CHANCE = 0.06;  // % chance a freshly spawned candy is striped
+export const LUCKY_WRAPPED_CHANCE = 0.02;  // % chance a freshly spawned candy is wrapped
+export const CHAIN_BONUS_THRESHOLD = 5; // consecutive valid swaps to spawn a free striped
+export const CRESCENDO_CASCADE_LEVEL = 4;
+
 // Coin payout per level-end star count (index = stars 0..3).
 export const COIN_PER_STAR = [0, 10, 25, 50];
 // Per cascade level above the first.
