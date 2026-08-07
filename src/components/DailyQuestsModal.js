@@ -37,7 +37,7 @@ function rowKey(q, i) {
 export default function DailyQuestsModal({ visible, quests, onClose }) {
   const safeQuests = Array.isArray(quests) ? quests : [];
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.box}>
           <Text style={styles.title}>Daily Quests</Text>

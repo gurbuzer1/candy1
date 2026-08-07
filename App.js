@@ -165,12 +165,23 @@ export default function App() {
   // Karar `backTarget` icinde, saf ve sinanabilir; burada yalnizca uygulanir.
   //
   // ⚠️ KAPSAM: RN'de gorunur bir <Modal> Android geri tusunu KENDISI yutar ve
-  // buraya hic ulasmaz. Bu yuzden onRequestClose'u kendi kapsamimdaki
-  // modallere (PreGameBoosterModal + GameScreen'in 2 sonuc modali + asagidaki
-  // 2 yeni modal) ekledim. HowToPlay/DailyLogin/DailyQuests/BoosterShop/
-  // Achievements ayri dosyalarda ve BU GOREVIN KAPSAMI DISINDA — onlarin
-  // dallari burada yine de dogru davranacak sekilde yazildi ama o modaller
-  // acikken olay bu kod yoluna ulasmayabilir.
+  // buraya HIC ulasmaz. Yani asagidaki switch'in modal dallari (closeHowTo,
+  // closeQuests, closeShop, closeAchievements) gercek cihazda TEK BASINA
+  // yetmez: her modalin KENDI `onRequestClose`'u olmak ZORUNDA.
+  //
+  // OLCULDU (bir onceki tur bu comment "5 modal kapsam disi" diyordu ve
+  // OLU KAPI birakiyordu): depoda 11 gercek <Modal> var.
+  //   App.js .............. 2  (asagida, ikisinde de onRequestClose)
+  //   GameScreen .......... 3  (quit + complete + failed)
+  //   PreGameBooster ...... 1
+  //   HowToPlay ........... 1  ← bu turda eklendi (onClose)
+  //   DailyQuests ......... 1  ← bu turda eklendi (onClose)
+  //   BoosterShop ......... 1  ← bu turda eklendi (onClose)
+  //   Achievements ........ 1  ← bu turda eklendi (onClose)
+  //   DailyLogin .......... 1  ← KASITLI ISTISNA, asagiya bak
+  // Tarama artik sabit sayi degil: tests/akis_butunlugu.test.js kaynaktaki
+  // TUM <Modal>'leri bulur, tasiyan dosyayi mount eder ve prop'u OKUR; yeni
+  // eklenen bir modal kendiliginden yakalanir.
   // ------------------------------------------------------------------
   useEffect(() => {
     const onBack = () => {
@@ -497,6 +508,14 @@ export default function App() {
 
       <HowToPlayModal visible={showHowTo} onClose={() => setShowHowTo(false)} />
 
+      {/*
+        KASITLI ISTISNA — DailyLoginModal'in `onRequestClose`'u YOK ve
+        OLMAYACAK. Odul ALINMADAN kapanmamali; Android geri tusunun modal
+        tarafindan yutulmasi burada ISTENEN davranistir ve `backTarget`
+        ayni seyi soyler (showLogin -> 'blocked'). Kapanisin tek yolu
+        `onClaim`. Muafiyet tests/akis_butunlugu.test.js'te ADIYLA yazilidir;
+        BASKA hicbir modal muaf degildir.
+      */}
       <DailyLoginModal
         visible={showLogin}
         day={pendingLoginDay}

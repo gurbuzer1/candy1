@@ -8,7 +8,7 @@ export default function AchievementsModal({ visible, unlocked, onClose }) {
   const won = Object.keys(unlocked || {}).filter((id) => unlocked[id]).length;
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.box}>
           <Text style={styles.title}>Achievements</Text>

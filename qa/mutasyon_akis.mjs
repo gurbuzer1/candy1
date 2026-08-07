@@ -20,7 +20,14 @@ const KOK = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP = path.join(KOK, 'App.js');
 const GAME = path.join(KOK, 'src', 'screens', 'GameScreen.js');
 const PREGAME = path.join(KOK, 'src', 'components', 'PreGameBoosterModal.js');
+// OLU MODAL KAPILARI turu: onRequestClose tasimasi gereken diger modaller.
+const HOWTO = path.join(KOK, 'src', 'screens', 'HowToPlayModal.js');
+const QUESTS = path.join(KOK, 'src', 'components', 'DailyQuestsModal.js');
+const SHOP = path.join(KOK, 'src', 'components', 'BoosterShopModal.js');
+const ACH = path.join(KOK, 'src', 'components', 'AchievementsModal.js');
+const LOGIN = path.join(KOK, 'src', 'components', 'DailyLoginModal.js');
 const SINAV = path.join('tests', 'akis_butunlugu.test.js');
+const SINAV_ABS = path.join(KOK, SINAV);
 
 /**
  * ⚠️ Dosyalar CRLF. Duz metin arama coklu satirda SESSIZCE eslesmez — ilk
@@ -135,10 +142,16 @@ const MUTASYONLAR = [
     '/* MUTANT: onRequestClose yok */',
   ],
   [
+    // ⚠️ BAYAT DESEN BULUNDU (2026-08-07): bu mutasyonun arama metni
+    // `if (backRequest > 0) requestQuit();` idi. c1a215c'deki regresyon
+    // duzeltmesi satiri `backRequestBaselineRef` olcutune cevirdi ve desen
+    // ARTIK ESLESMIYORDU -> mutasyon SESSIZCE uygulanmiyordu, yani "backRequest
+    // dinleniyor mu" sorusu turlardir HIC sinanmamisti. Yeni gecis sayaci
+    // (`arama metni N kez gecti`) bunu ortaya cikardi. Desen guncellendi.
     'M16 donanim geri istegi (backRequest) dinlenmez',
     GAME,
-    'if (backRequest > 0) requestQuit();',
-    '// MUTANT: dinlenmiyor',
+    '    if (backRequest > backRequestBaselineRef.current) {',
+    '    if (false) { // MUTANT: dinlenmiyor',
   ],
   [
     'M17 "<- Back" secimi sifirlamaz (eski davranis)',
@@ -162,6 +175,54 @@ const MUTASYONLAR = [
     'M20 PreGameBoosterModal Modal\'inda onRequestClose yok',
     PREGAME,
     'onRequestClose={cancel}',
+    '',
+  ],
+
+  // ------------------------------------------------------------------
+  // OLU MODAL KAPILARI (bu tur). Android'de gorunur bir Modal donanim geri
+  // tusunu KENDISI yutar; `onRequestClose` yoksa tus HICBIR yere gitmez ve
+  // oyuncu modalda sikisir. Asagidaki dortu 2026-08-07'de duzeltildi.
+  // ------------------------------------------------------------------
+  [
+    'M21 HowToPlayModal kapisi OLU (onRequestClose kaldirildi)',
+    HOWTO,
+    '<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>',
+    '<Modal visible={visible} transparent animationType="fade">',
+  ],
+  [
+    'M22 DailyQuestsModal kapisi OLU',
+    QUESTS,
+    '<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>',
+    '<Modal visible={visible} transparent animationType="fade">',
+  ],
+  [
+    'M23 BoosterShopModal kapisi OLU',
+    SHOP,
+    '<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>',
+    '<Modal visible={visible} transparent animationType="fade">',
+  ],
+  [
+    'M24 AchievementsModal kapisi OLU',
+    ACH,
+    '<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>',
+    '<Modal visible={visible} transparent animationType="fade">',
+  ],
+  [
+    // TERS YONLU KONTROL: muafiyet BAYATLARSA da kirilmali. DailyLogin'e
+    // onRequestClose eklenirse "kasitli istisna" gerekcesi coker; sinav
+    // muafiyeti sessizce tasimamali, KALDIRILMASINI istemeli.
+    'M25 (TERS) DailyLoginModal onRequestClose KAZANIR -> muafiyet bayatlar',
+    LOGIN,
+    '<Modal visible={visible} transparent animationType="fade">',
+    '<Modal visible={visible} transparent animationType="fade" onRequestClose={onClaim}>',
+  ],
+  [
+    // OLCUMUN KENDISI: kesif testi gercekten isiriyor mu? Kayit defterinden
+    // bir dosya dusurulurse "Modal tasiyan ama SINANMAYAN dosya" cikmali.
+    // (Bu olmadan defter sessizce kucultulup tarama kor edilebilirdi.)
+    'M26 (OLCUM) kayit defterinden HowToPlay dusuruldu -> kesif kor kalmamali',
+    SINAV_ABS,
+    "  { dosya: HOWTO, mount: () => mount(HOWTO, { visible: true, onClose: () => {} }) },",
     '',
   ],
 ];
@@ -193,8 +254,12 @@ let hata = 0;
 for (const [ad, dosya, bul, degistir] of MUTASYONLAR) {
   const o = readFileSync(dosya, 'utf8');
   const re = desen(bul);
-  if (!re.test(o)) {
-    console.log(`✖ ${ad}\n   DESEN BULUNAMADI -> mutasyon UYGULANMADI (sessiz basari tuzagi)`);
+  // ⚠️ ARAMA METNI KAC KEZ GECIYOR: 0 ise mutasyon hic uygulanmaz (sessiz
+  // basari tuzagi), 1'den fazlaysa `replace` YALNIZCA ILKINI degistirir ve
+  // "neyi bozdugumuzu" bilmeyiz. Ikisi de sinavi GECERSIZ kilar.
+  const kez = (o.match(new RegExp(re.source, 'g')) || []).length;
+  if (kez !== 1) {
+    console.log(`✖ ${ad}\n   arama metni ${kez} kez gecti (1 olmali) -> sinav GECERSIZ`);
     hata += 1;
     continue;
   }
@@ -210,7 +275,7 @@ for (const [ad, dosya, bul, degistir] of MUTASYONLAR) {
   const durum = uygulandi && kirmizi && geri && y.kod === 0 ? '✔' : '✖';
   if (durum === '✖') hata += 1;
   console.log(
-    `${durum} ${ad}\n   uygulandi(s!==o)=${uygulandi} | mutantta fail=${r.fail} `
+    `${durum} ${ad}\n   gecis=${kez} | uygulandi(s!==o)=${uygulandi} | mutantta fail=${r.fail} `
     + `(cikis ${r.kod}) | geri alindi=${geri} | geri alinca fail=${y.fail}`,
   );
 }

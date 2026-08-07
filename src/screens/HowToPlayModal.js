@@ -11,7 +11,7 @@ import { THEME } from '../constants/game';
 
 export default function HowToPlayModal({ visible, onClose }) {
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.content}>
           <Text style={styles.title}>How to Play</Text>

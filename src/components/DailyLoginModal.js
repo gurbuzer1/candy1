@@ -5,6 +5,14 @@ import { DAILY_LOGIN_REWARDS, BOOSTER_DEFS } from '../constants/economy';
 
 export default function DailyLoginModal({ visible, day, onClaim }) {
   return (
+    // ⚠️ `onRequestClose` BILEREK YOK — bu tek KASITLI istisna.
+    // Android'de gorunur bir Modal donanim geri tusunu kendisi yutar; burada
+    // yutmasi ISTENEN davranis: gunluk giris odulu ALINMADAN modal kapanmamali
+    // (App.backTarget da ayni kurali soyluyor: showLogin -> 'blocked').
+    // Kapanisin TEK yolu asagidaki "Claim" dugmesi -> onClaim.
+    // Baska bir modalde onRequestClose'un olmamasi HATADIR: bkz.
+    // tests/akis_butunlugu.test.js "OLU MODAL KAPILARI" taramasi (muafiyet
+    // listesi yalnizca bu dosyayi icerir).
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.box}>

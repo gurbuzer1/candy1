@@ -5,7 +5,7 @@ import { BOOSTER_LIST } from '../constants/economy';
 
 export default function BoosterShopModal({ visible, coins, inventory, onBuy, onClose }) {
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.box}>
           <Text style={styles.title}>Booster Shop</Text>

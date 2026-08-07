@@ -21,6 +21,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -259,6 +260,19 @@ test('BULGU 5: App donanim geri tusunu GERCEKTEN kaydeder ve geri gezinir', asyn
   });
 });
 
+// --------------------------------------------------------------------
+// OLU MODAL KAPILARI — SABIT SAYI DEGIL, TARAMA.
+//
+// Asagidaki iki test (GameScreen/PreGame ve "App'in kendi 2 modali") DOGRU
+// ama DAR: sabit sayilar yazar ve yalnizca 3 dosyaya bakar. Dogrulama ajani
+// olctu: depoda 11 gercek <Modal> var, o iki test bunlarin 6'sini goruyordu;
+// kalan 5'ten 4'u OLU KAPIYDI (Android'de gorunur bir Modal donanim geri
+// tusunu KENDISI yutar, App.js'in BackHandler'ina HIC ulasmaz -> oyuncu
+// sikisir). Testler SILINMEDI (hala dogru ve daha keskin hata mesaji
+// veriyorlar); asagiya TARAYICI eklendi: yeni bir modal eklendiginde
+// kimsenin bir sayiyi elle guncellemesi gerekmez.
+// --------------------------------------------------------------------
+
 test('BULGU 5: GameScreen ve PreGameBoosterModal Modal\'larinda onRequestClose VAR', () => {
   withoutTimers(() => {
     const g = mount(GAME, {
@@ -296,6 +310,188 @@ test('BULGU 5: App\'in KENDI iki yeni modali da onRequestClose tasir', async () 
       modaller.filter((n) => typeof n.props.onRequestClose === 'function').length,
       2,
     );
+  });
+});
+
+// ====================================================================
+// OLU MODAL KAPILARI — TUM MODALLERIN TARANMASI
+//
+// OLCUM BICIMI iki katmanli, cunku tek katman yalan soyluyor:
+//   1) KESIF  — kaynakta (App.js + src/**) `<Modal` gecen DOSYALARI bulur.
+//      Bu yalnizca "nereye bakmali" sorusunu cevaplar; prop'a kaynaktan
+//      BAKMAZ (grep, `onRequestClose={undefined}` gibi bir yalani goremez).
+//   2) DOGRULAMA — bulunan her dosya GERCEKTEN mount edilir, agactaki Modal
+//      dugumlerinin `props.onRequestClose`'u OKUNUR ve fonksiyon mu diye
+//      bakilir.
+// Yeni bir modal eklenirse (1) onu bulur, kayit defterinde yoksa test
+// KIRILIR ve "kayit defterine ekle" der. Sabit sayi YOK.
+// ====================================================================
+
+const HOWTO = path.join(KOK, 'src', 'screens', 'HowToPlayModal.js');
+const QUESTS = path.join(KOK, 'src', 'components', 'DailyQuestsModal.js');
+const SHOP = path.join(KOK, 'src', 'components', 'BoosterShopModal.js');
+const ACH = path.join(KOK, 'src', 'components', 'AchievementsModal.js');
+const LOGIN = path.join(KOK, 'src', 'components', 'DailyLoginModal.js');
+
+/**
+ * KASITLI ISTISNA — TEK. DailyLoginModal'in geri tusunu YUTMASI istenen
+ * davranistir (odul alinmadan kapanmamali; `backTarget` da 'blocked' der).
+ * Bu liste BUYUMEMELI: asagida hem "muaf olan gercekten muaf mi" hem de
+ * "muafiyet digerlerini kor etti mi" ayri ayri sinaniyor.
+ */
+const MUAF = ['DailyLoginModal.js'];
+
+/** `//` ve `/* *\/` yorumlarini kabaca siler — yorumdaki `<Modal>` sayilmasin. */
+function yorumsuz(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
+/** App.js + src/** icinde `<Modal` gecen dosyalar (mutlak yol). */
+function modalTasiyanDosyalar() {
+  const bulunan = [];
+  const bak = (f) => {
+    if (/<Modal\b/.test(yorumsuz(fs.readFileSync(f, 'utf8')))) bulunan.push(f);
+  };
+  const gez = (d) => {
+    for (const ad of fs.readdirSync(d)) {
+      const fp = path.join(d, ad);
+      if (fs.statSync(fp).isDirectory()) gez(fp);
+      else if (/\.jsx?$/.test(ad)) bak(fp);
+    }
+  };
+  bak(path.join(KOK, 'App.js'));
+  gez(path.join(KOK, 'src'));
+  return bulunan;
+}
+
+/**
+ * KAYIT DEFTERI: her modal tasiyici dosya + onu AYAGA KALDIRAN prop'lar.
+ * Kosum takimi ic ice fonksiyon bilesenlerini BILEREK cagirmaz (bkz.
+ * qa_akis_render.mjs), yani App'i mount etmek cocuk modallerin Modal
+ * dugumlerini URETMEZ — her dosya AYRI mount edilmek ZORUNDA. Sabit sayi
+ * yerine bu defter tutuluyor.
+ */
+const KAYIT_DEFTERI = [
+  { dosya: GAME, mount: () => mount(GAME, {
+    levelNum: 3, save: { inventory: {} }, boosters: {},
+    onLevelEnd: () => {}, onBack: () => {}, backRequest: 0,
+  }) },
+  { dosya: PREGAME, mount: () => mount(PREGAME, {
+    visible: true, levelNum: 2, inventory: {},
+    onConfirm: () => {}, onCancel: () => {},
+  }) },
+  { dosya: HOWTO, mount: () => mount(HOWTO, { visible: true, onClose: () => {} }) },
+  { dosya: QUESTS, mount: () => mount(QUESTS, {
+    visible: true, quests: [], onClose: () => {},
+  }) },
+  { dosya: SHOP, mount: () => mount(SHOP, {
+    visible: true, coins: 0, inventory: {}, onBuy: () => {}, onClose: () => {},
+  }) },
+  { dosya: ACH, mount: () => mount(ACH, {
+    visible: true, unlocked: {}, onClose: () => {},
+  }) },
+  { dosya: LOGIN, mount: () => mount(LOGIN, {
+    visible: true, day: 1, onClaim: () => {},
+  }) },
+];
+
+/** Mount edilmis bir agactaki Modal dugumleri. */
+function modalDugumleri(m) {
+  return flattenNodes(m.tree).filter((n) => n.name === 'Modal');
+}
+
+/** OLU KAPI olcutu: prop bir FONKSIYON degilse geri tusu hicbir yere gitmez. */
+function oluKapi(node) {
+  return typeof node.props?.onRequestClose !== 'function';
+}
+
+test('OLU KAPI: kaynakta `<Modal` gecen HER dosya kayit defterinde olmali', () => {
+  const kaynakta = modalTasiyanDosyalar().map((f) => path.relative(KOK, f));
+  const defterde = [APP, ...KAYIT_DEFTERI.map((k) => k.dosya)]
+    .map((f) => path.relative(KOK, f));
+
+  const eksik = kaynakta.filter((f) => !defterde.includes(f));
+  const fazla = defterde.filter((f) => !kaynakta.includes(f));
+
+  assert.deepEqual(eksik, [],
+    `Modal tasiyan ama SINANMAYAN dosya(lar): ${eksik.join(', ')} `
+    + '-> tests/akis_butunlugu.test.js icindeki KAYIT_DEFTERI\'ne ekle.');
+  assert.deepEqual(fazla, [],
+    `Defterde olup kaynakta Modal tasimayan dosya(lar): ${fazla.join(', ')}`);
+  // Olcumun kendisi yasiyor mu: hicbir sey bulamayan bir tarayici da "eksik
+  // yok" der. En az App.js + GameScreen bulunmali.
+  assert.ok(kaynakta.length >= 2, `tarama coktu, bulunan: ${kaynakta.length}`);
+});
+
+test('OLU KAPI: MUAF olanlar disinda her Modal onRequestClose TASIR', async () => {
+  await withoutTimers(async () => {
+    const olu = [];
+    let toplam = 0;
+
+    // App.js'in KENDI modalleri (gercek uygulama akisiyla mount edilir).
+    const { m } = await appKur();
+    for (const n of modalDugumleri(m)) {
+      toplam += 1;
+      if (oluKapi(n)) olu.push(`App.js: "${collectText(n).join(' ').slice(0, 40)}"`);
+    }
+
+    for (const { dosya, mount: kur } of KAYIT_DEFTERI) {
+      const ad = path.basename(dosya);
+      const dugumler = modalDugumleri(kur());
+      assert.ok(dugumler.length > 0, `${ad}: agacta Modal BULUNAMADI (olcum coktu)`);
+      for (const n of dugumler) {
+        toplam += 1;
+        if (MUAF.includes(ad)) continue; // kasitli istisna
+        if (oluKapi(n)) olu.push(`${ad}: "${collectText(n).join(' ').slice(0, 40)}"`);
+      }
+    }
+
+    assert.deepEqual(olu, [],
+      `onRequestClose TASIMAYAN Modal(ler) -- Android geri tusu bunlarda OLU:\n  `
+      + olu.join('\n  '));
+    // Kalibrasyon: sayim gercekten yapildi mi (0 modal sayan bir olcum de
+    // "olu kapi yok" derdi).
+    assert.ok(toplam >= 11, `taranan Modal sayisi beklenenden az: ${toplam}`);
+  });
+});
+
+test('OLU KAPI: muafiyet DIGER modalleri kor etmiyor (kontrol vakasi)', async () => {
+  await withoutTimers(async () => {
+    // (a) Muafiyet listesi TEK ad icerir ve o ad gercekten bir modal dosyasi.
+    assert.deepEqual(MUAF, ['DailyLoginModal.js']);
+    assert.ok(
+      KAYIT_DEFTERI.some((k) => path.basename(k.dosya) === MUAF[0]),
+      'muaf tutulan dosya defterde bile degil -> muafiyet anlamsiz',
+    );
+
+    // (b) Muafiyet HALA GEREKLI mi? DailyLogin'e bir gun onRequestClose
+    // eklenirse bu satir kirilir ve muafiyetin KALDIRILMASI gerektigini
+    // soyler. Boylece liste sessizce bayatlamaz.
+    const l = modalDugumleri(mount(LOGIN, { visible: true, day: 1, onClaim: () => {} }));
+    assert.equal(l.length, 1);
+    assert.ok(oluKapi(l[0]),
+      'DailyLoginModal artik onRequestClose tasiyor -> MUAF listesinden CIKAR');
+
+    // (c) Muaf OLMAYAN her dosya gercekten sinaniyor mu: muafiyet disindaki
+    // her kayit en az bir Modal uretmeli ve HEPSI kapiyi tasimali.
+    const sinananlar = KAYIT_DEFTERI
+      .filter((k) => !MUAF.includes(path.basename(k.dosya)));
+    assert.equal(sinananlar.length, KAYIT_DEFTERI.length - 1,
+      'muaf olmayan dosya sayisi beklenenden farkli');
+    for (const { dosya, mount: kur } of sinananlar) {
+      const ad = path.basename(dosya);
+      for (const n of modalDugumleri(kur())) {
+        assert.ok(!oluKapi(n), `${ad} muaf DEGIL ama kapisi OLU`);
+      }
+    }
+
+    // (d) OLCUT'un kendisi calisiyor mu: uydurma bir "kapisiz" dugum OLU
+    // sayilmali, kapili olan sayilmamali. (Bu olmadan `oluKapi` daima false
+    // dondurse bile yukaridaki her sey YESIL gecerdi.)
+    assert.equal(oluKapi({ props: {} }), true);
+    assert.equal(oluKapi({ props: { onRequestClose: undefined } }), true);
+    assert.equal(oluKapi({ props: { onRequestClose: true } }), true, 'fonksiyon degilse OLU');
+    assert.equal(oluKapi({ props: { onRequestClose: () => {} } }), false);
   });
 });
 
