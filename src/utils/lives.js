@@ -12,14 +12,35 @@ function normalizeAnchor(value, now) {
   return Math.min(value, now);
 }
 
+// ESKI (KIRIK) HALI — silinmedi, altta yorumda duruyor:
+//   function normalizeLives(value) {
+//     if (!Number.isFinite(value)) return LIVES_MAX;   // <-- BOZUK KAYIT ODULU
+//     return Math.min(LIVES_MAX, Math.max(0, Math.trunc(value)));
+//   }
+// Olculdu: settleLives({lives:"abc"}) -> 5, settleLives({lives:{}}) -> 5,
+// JSON'dan gelen {"lives":1e400} -> Infinity -> 5. Yani kaydi BOZMAK tam can
+// veriyordu: "sayisal degilse tam doldur" kurali istismarin ta kendisi.
+//
+// YENI KURAL — alanin YOK olmasi ile BOZUK olmasi ayri seylerdir:
+//   - alan hic yok / null            -> yeni oyuncu, LIVES_MAX (mesru varsayilan)
+//   - sayi veya sayisal metin        -> [0, LIVES_MAX] araligina kirpilir
+//   - baska her sey (NaN/Infinity/{}/[]/"abc"/true) -> 0 (odul YOK)
 function normalizeLives(value) {
-  if (!Number.isFinite(value)) return LIVES_MAX;
-  return Math.min(LIVES_MAX, Math.max(0, Math.trunc(value)));
+  if (value == null) return LIVES_MAX;
+  let n;
+  if (typeof value === 'number') n = value;
+  else if (typeof value === 'string' && value.trim() !== '') n = Number(value);
+  else n = NaN;
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(LIVES_MAX, Math.max(0, Math.trunc(n)));
 }
 
 export function settleLives(save, now = Date.now()) {
   let { lives, lastLifeRegenMs } = save;
-  if (lives == null) lives = LIVES_MAX;
+  // ESKI SATIR (silinmedi): `if (lives == null) lives = LIVES_MAX;`
+  // Kurali IKI yere yaymak, "alan yok" dalini normalizeLives icinde ULASILMAZ
+  // koda cevirmisti: ters yon mutasyon sinavinda `null -> 0` mutanti YESIL
+  // gecti (yani o dali hicbir test tutmuyordu). Karar tek noktada:
   lives = normalizeLives(lives);
   lastLifeRegenMs = normalizeAnchor(lastLifeRegenMs, now);
 
@@ -45,7 +66,9 @@ export function settleLives(save, now = Date.now()) {
 
 // Returns ms until the next life regen, or 0 if lives are full.
 export function msUntilNextLife(save, now = Date.now()) {
-  if (normalizeLives(save.lives ?? LIVES_MAX) >= LIVES_MAX) return 0;
+  // ESKI SATIR (silinmedi): `if (normalizeLives(save.lives ?? LIVES_MAX) >= LIVES_MAX) return 0;`
+  // `?? LIVES_MAX` da ayni dali ikinci kez yaziyordu; kural normalizeLives'ta.
+  if (normalizeLives(save.lives) >= LIVES_MAX) return 0;
   // Anchor gelecekteyse kirpilir: geri sayim hicbir zaman LIFE_REGEN_MS'i
   // (20:00) asamaz, "43220:00" gibi bir sayac artik imkansiz.
   const last = normalizeAnchor(save.lastLifeRegenMs, now);

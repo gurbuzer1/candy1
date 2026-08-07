@@ -29,12 +29,16 @@ const {
   sanitizeSave, sanitizeQuests, isValidQuest, deriveMaxLevel,
   evaluateDailyLogin, needsQuestRefresh, safeInt, localDateStr,
   loadProgress, saveProgress,
+  // KAYIT ISTISMARI turu — yeni turetme/kirpma yardimcilari
+  deriveMaxLevelZincirsiz, reachableProgress, levelWon, clampStats,
+  maxReachableCoins, maxReachableBooster, computeStars,
 } = await import("../src/utils/storage.js");
 const { __clear } = await import("./qa_asyncstorage_stub.mjs");
 const { settleLives, msUntilNextLife, formatMsClock, takeLife } =
   await import("../src/utils/lives.js");
 const { ensureDailyQuests } = await import("../src/utils/quests.js");
-const { LIVES_MAX, LIFE_REGEN_MS, STARTER_COINS } =
+const { checkUnlocks } = await import("../src/utils/achievements.js");
+const { LIVES_MAX, LIFE_REGEN_MS, STARTER_COINS, QUEST_POOL, BOOSTER_DEFS } =
   await import("../src/constants/economy.js");
 const { LEVELS } = await import("../src/constants/levels.js");
 
@@ -71,6 +75,32 @@ const gecerliGorev = (over = {}) => ({
   id: "win_levels", event: "win", desc: "Win 3 levels",
   target: 3, progress: 1, reward: 50, claimed: false, ...over,
 });
+
+/** QUEST_POOL'daki i. gorevin MESRU kaydi (quests.js:16-24 ne yaziyorsa o). */
+function havuzGorevi(i, over = {}) {
+  const q = QUEST_POOL[i];
+  return {
+    id: q.id, event: q.event, desc: q.desc.replace("{N}", String(q.target)),
+    target: q.target, progress: 0, reward: q.reward, claimed: false, ...over,
+  };
+}
+
+/** Seviye n'i `yildiz` yildizla kazanan oyuncunun yazacagi GERCEK skor. */
+function kazanilanSkor(n, yildiz) {
+  const lv = LEVELS[n - 1];
+  return yildiz >= 3 ? lv.target3 : yildiz === 2 ? lv.target2 : lv.target1;
+}
+
+/** 1..n araligini MESRU OYUNLA tamamlamis bir kaydin ilerleme parcasi. */
+function mesruIlerleme(n, yildiz = 1) {
+  const stars = {};
+  const highScores = {};
+  for (let i = 1; i <= n; i++) {
+    stars[i] = yildiz;
+    highScores[i] = kazanilanSkor(i, yildiz);
+  }
+  return { stars, highScores };
+}
 
 // ===========================================================================
 // BULGU 1 [ENGEL] — Bozuk kayit Daily Quests ekranini COKERTIYORDU
@@ -149,7 +179,8 @@ test("BULGU 1: gorev KURALI da dogrulanir (progress > target GECERSIZ)", () => {
   assert.equal(isValidQuest(1), false);
   // Tek bozuk gorev TUM listeyi dusurur (yarim gun uretilmez).
   assert.deepEqual(sanitizeQuests([gecerliGorev(), gecerliGorev({ id: "x" }), 3]), []);
-  assert.equal(sanitizeQuests([gecerliGorev(), gecerliGorev({ id: "x" })]).length, 2);
+  // KONTROL: HAVUZDA GERCEKTEN OLAN iki gorev aynen gecer (asiri eleme yok).
+  assert.equal(sanitizeQuests([havuzGorevi(0), havuzGorevi(1)]).length, 2);
 });
 
 // ===========================================================================
@@ -166,24 +197,31 @@ test("BULGU 2: `maxLevel:999` kayittan seviye ACMAZ (turetiliyor)", () => {
   assert.equal(sanitizeSave({}).maxLevel, 1);
 });
 
-test("BULGU 2: maxLevel KAZANILMIS yildiz/skordan turetilir", () => {
+test("BULGU 2: maxLevel KAZANILMIS ilerlemeden turetilir (zincirle)", () => {
   // Kural: GameScreen `won = score >= target1`, yani kazanilan seviye >= 1 yildiz.
-  assert.equal(sanitizeSave({ stars: { 1: 3, 2: 1 }, maxLevel: 1 }).maxLevel, 3);
-  assert.equal(sanitizeSave({ stars: { 1: 3 }, highScores: { 5: 9999 } }).maxLevel, 6);
+  // 2. TUR NOTU: artik tek anahtar degil, 1'den baslayan KESINTISIZ ZINCIR
+  // okunuyor (bkz. BULGU 7) — asagidaki vakalar o zincire gore yazildi.
+  const iki = mesruIlerleme(2, 3);
+  assert.equal(sanitizeSave({ ...iki, maxLevel: 1 }).maxLevel, 3);
+  assert.equal(sanitizeSave(mesruIlerleme(5, 1)).maxLevel, 6);
   assert.equal(sanitizeSave({ stars: { 1: 0 } }).maxLevel, 1, "0 yildiz = kazanilmamis");
-  assert.equal(deriveMaxLevel({ 7: 2 }, {}), 8);
+  assert.equal(deriveMaxLevel(mesruIlerleme(7, 2).stars, mesruIlerleme(7, 2).highScores), 8);
   // Aralik disi anahtarlar sizmaz.
   assert.equal(sanitizeSave({ stars: { 999: 3 } }).maxLevel, 1);
-  assert.equal(sanitizeSave({ stars: { [LEVELS.length]: 3 } }).maxLevel, LEVELS.length,
+  const tam = mesruIlerleme(LEVELS.length, 3);
+  assert.equal(sanitizeSave(tam).maxLevel, LEVELS.length,
     "son seviyeyi gecince maxLevel LEVELS.length'i ASMAZ");
-  assert.equal(deriveMaxLevel({ 4: 1 }, {}) <= LEVELS.length, true);
+  assert.equal(deriveMaxLevel(mesruIlerleme(4, 1).stars, mesruIlerleme(4, 1).highScores) <= LEVELS.length, true);
 });
 
 test("BULGU 2: mesru ilerleme KAYBOLMUYOR (regresyon)", () => {
   const mesru = {
-    maxLevel: 4, stars: { 1: 3, 2: 2, 3: 1 }, highScores: { 1: 9000, 2: 5000, 3: 2600 },
+    maxLevel: 4,
+    stars: { 1: 3, 2: 2, 3: 1 },
+    // MESRU skorlar: her biri o seviyenin yildiz esigini GERCEKTEN gecmis.
+    highScores: { 1: kazanilanSkor(1, 3), 2: kazanilanSkor(2, 2), 3: kazanilanSkor(3, 1) },
     coins: 320, lives: 3, winStreak: 2,
-    stats: { lifetimeWins: 3, lifetimeMatches: 140, bestWinStreak: 2 },
+    stats: { lifetimeWins: 3, lifetimeMatches: 140, bestWinStreak: 2, lifetimeCoinsEarned: 900 },
     inventory: { shuffle: 2 }, achievements: { first_match: true },
   };
   const s = sanitizeSave(mesru);
@@ -196,6 +234,7 @@ test("BULGU 2: mesru ilerleme KAYBOLMUYOR (regresyon)", () => {
   assert.equal(s.inventory.shuffle, 2);
   assert.equal(s.achievements.first_match, true);
   assert.deepEqual(s.stars, { 1: 3, 2: 2, 3: 1 });
+  assert.deepEqual(s.highScores, mesru.highScores, "skor tablosu da aynen kalmali");
 });
 
 // ===========================================================================
@@ -222,8 +261,11 @@ test("BULGU 3: `1e400` / negatif / bozuk cuzdan degerleri elenir", () => {
 test("BULGU 3: lives / stats / inventory de sayiya zorlanir", () => {
   assert.equal(sanitizeSave({ lives: 99 }).lives, LIVES_MAX);
   assert.equal(sanitizeSave({ lives: -3 }).lives, 0);
-  assert.equal(sanitizeSave({ lives: "abc" }).lives, LIVES_MAX);
-  assert.equal(sanitizeSave(fromJson('{"lives":1e400}')).lives, LIVES_MAX);
+  // 2. TUR DUZELTMESI (bkz. BULGU 14): BOZUK deger artik tam can ODULU DEGIL.
+  assert.equal(sanitizeSave({ lives: "abc" }).lives, 0);
+  assert.equal(sanitizeSave(fromJson('{"lives":1e400}')).lives, 0);
+  assert.equal(sanitizeSave({}).lives, LIVES_MAX, "KONTROL: alan YOKSA yeni oyuncu");
+  assert.equal(sanitizeSave({ lives: null }).lives, LIVES_MAX, "KONTROL: null = alan yok");
 
   const s = sanitizeSave({ stats: { lifetimeWins: "7", lifetimeMatches: -4, bestCascadeLevel: null } });
   assert.equal(s.stats.lifetimeWins, 7);
@@ -233,7 +275,10 @@ test("BULGU 3: lives / stats / inventory de sayiya zorlanir", () => {
     assert.equal(Number.isFinite(v), true, `stats.${k} sonlu sayi olmali`);
   }
 
-  assert.equal(sanitizeSave({ inventory: { shuffle: "3", hammer: -1 } }).inventory.shuffle, 3);
+  // 2. TUR NOTU: envanter artik ULASILABILIR sayiya da kirpiliyor (BULGU 12),
+  // o yuzden 3 shuffle icin 3x50 coin'lik bir kazanc gecmisi gerekiyor.
+  assert.equal(sanitizeSave({ inventory: { shuffle: "3", hammer: -1 },
+    stats: { lifetimeCoinsEarned: 500 } }).inventory.shuffle, 3);
   assert.equal(sanitizeSave({ inventory: { hammer: -1 } }).inventory.hammer, 0);
   // Basarim bayragi yalnizca GERCEK true kabul edilir.
   assert.deepEqual(sanitizeSave({ achievements: { a: 1, b: "true", c: true } }).achievements, { c: true });
@@ -262,7 +307,9 @@ test("BULGU 3: hicbir girdi sekli sanitizeSave'i COKERTMEZ", () => {
 test("BULGU 4: dunun gorevleri BUGUN gecersizdir (needsQuestRefresh)", () => {
   const dun = {
     lastQuestRefreshDateStr: "2026-08-06",
-    dailyQuests: [gecerliGorev({ id: "a" }), gecerliGorev({ id: "b" }), gecerliGorev({ id: "c" })],
+    // Gorevler HAVUZDAN gelmeli, yoksa yenileme zaten BULGU 11 yuzunden tetiklenir
+    // ve bu test tarih kuralini olcmus olmaz.
+    dailyQuests: [havuzGorevi(0), havuzGorevi(1), havuzGorevi(2)],
   };
   assert.equal(needsQuestRefresh(dun, "2026-08-07"), true);
   assert.equal(needsQuestRefresh({ ...dun, lastQuestRefreshDateStr: "2026-08-07" }, "2026-08-07"), false);
@@ -399,7 +446,9 @@ test("BULGU 6: geri sayim 20:00'i ASAMAZ — '43220:00' imkansiz", () => {
 
 test("BULGU 6: bozuk can/anchor degerleri settleLives'i sasirtmaz", () => {
   const now = 1_800_000_000_000;
-  assert.equal(settleLives({ lives: "abc", lastLifeRegenMs: now }, now).lives, LIVES_MAX);
+  // 2. TUR DUZELTMESI (BULGU 14): bozuk deger 0 can, alan yoklugu LIVES_MAX.
+  assert.equal(settleLives({ lives: "abc", lastLifeRegenMs: now }, now).lives, 0);
+  assert.equal(settleLives({ lastLifeRegenMs: now }, now).lives, LIVES_MAX, "KONTROL");
   assert.equal(settleLives({ lives: 99, lastLifeRegenMs: now }, now).lives, LIVES_MAX);
   assert.equal(settleLives({ lives: -4, lastLifeRegenMs: now - LIFE_REGEN_MS }, now).lives, 1);
   assert.equal(settleLives({ lives: 0, lastLifeRegenMs: NaN }, now).lastLifeRegenMs, now);
@@ -421,10 +470,15 @@ test("UCTAN UCA: MESRU kayit kaydet->yukle turunda HICBIR SEY kaybetmez", async 
   s = withFakeDay("2026-08-07", () => ensureDailyQuests(s));
   s = {
     ...s,
-    stars: { 1: 3, 2: 2 }, highScores: { 1: 9000, 2: 5000 }, maxLevel: 3,
+    // MESRU kayit: skorlar yildizlarla tutarli, para kazanilandan az,
+    // seri en iyi seriyi asmiyor (hepsi App.js'in yazdigi bicimde).
+    stars: { 1: 3, 2: 2 },
+    highScores: { 1: kazanilanSkor(1, 3), 2: kazanilanSkor(2, 2) },
+    maxLevel: 3,
     coins: 412, lives: 2, winStreak: 2,
+    stats: { ...s.stats, lifetimeMatches: 140, lifetimeWins: 2, bestWinStreak: 2, lifetimeCoinsEarned: 900 },
     inventory: { shuffle: 1 }, achievements: { first_match: true },
-    loginDay: 3, lastLoginDateStr: "2026-08-07",
+    loginDay: 3, lastLoginDateStr: localDateStr(),
   };
   await saveProgress(s);
   const geri = await loadProgress();
@@ -440,6 +494,241 @@ test("UCTAN UCA: MESRU kayit kaydet->yukle turunda HICBIR SEY kaybetmez", async 
   assert.equal(geri.dailyQuests.every((q) => typeof q.event === "string"), true,
     "`event` alani korunmali, yoksa gorevler bir daha ilerlemez");
   __clear();
+});
+
+// ===========================================================================
+// 2. TUR — KAYIT ISTISMARI. Bir onceki tur `maxLevel`i TURETMEYE cevirdi;
+// dogrulama ajani bunun istismari KAPATMADIGINI, sadece BIR ALAN OTEYE
+// TASIDIGINI olctu (qa/dusman_kayit.mjs -> 55 vakanin 13'u KIRIK).
+// Ortak kok: yukleme TIP koruyordu, ALANLAR ARASI KURALA bakmiyordu.
+// Yeni olcut: "bu duruma MESRU OYUNLA ULASILABILIR MI?"
+// ===========================================================================
+
+test("BULGU 7 [ENGEL]: stars/highScores yazarak seviye ACILMAZ (zincir kurali)", () => {
+  // OLCULDU (once): {"stars":{"30":3}} -> maxLevel 30 (30/30 seviye acildi)
+  //                 {"highScores":{"29":1}} -> maxLevel 30 (TEK puan yetti)
+  assert.equal(sanitizeSave({ stars: { 30: 3 } }).maxLevel, 1);
+  assert.equal(sanitizeSave({ highScores: { 29: 1 } }).maxLevel, 1);
+  assert.equal(sanitizeSave({ stars: { 30: 3 }, highScores: { 30: 99999 } }).maxLevel, 1,
+    "ikisi birden yazilsa bile 1..29 zinciri yok");
+
+  // Eski turetme hala dosyada duruyor: farki BURADA olculuyor.
+  assert.equal(deriveMaxLevelZincirsiz({ 30: 3 }, {}), 30, "eski kural 30 veriyordu");
+  assert.equal(deriveMaxLevel({ 30: 3 }, {}), 1, "yeni kural zinciri ariyor");
+
+  // Zincirin ORTASI kopuksa ulasilabilir en yuksek noktaya KIRPILIR.
+  const delik = mesruIlerleme(5, 2);
+  delik.stars[20] = 3;
+  delik.highScores[20] = kazanilanSkor(20, 3);
+  const s = sanitizeSave(delik);
+  assert.equal(s.maxLevel, 6, "1..5 saglam, 20 ulasilamaz -> 6'ya kirpilir");
+  assert.equal(s.stars[20], undefined, "ulasilamaz kayit dusuruldu");
+  assert.equal(s.highScores[20], undefined);
+  assert.deepEqual(Object.keys(s.stars), ["1", "2", "3", "4", "5"]);
+});
+
+test("BULGU 7 KONTROL: MESRU zincir hicbir sey KAYBETMEZ", () => {
+  // Ters yon sinavi: kirpma dogruysa gercek oyuncunun ilerlemesi AYNEN kalmali.
+  // (Ozelligi tamamen oldurmek de "istismar kapandi" gorunurdu.)
+  for (const n of [1, 5, 15, LEVELS.length]) {
+    const mesru = mesruIlerleme(n, 3);
+    const s = sanitizeSave(mesru);
+    assert.equal(s.maxLevel, Math.min(LEVELS.length, n + 1), `${n} seviye kazanilmis`);
+    assert.equal(Object.keys(s.stars).length, n, `${n} seviyenin yildizi durmali`);
+    assert.deepEqual(s.highScores, Object.fromEntries(
+      Object.entries(mesru.highScores).map(([k, v]) => [k, v])), "skorlar aynen");
+  }
+  // "sev 30 kazanilmis -> maxLevel 30" regresyon vakasi (MESRU haliyle):
+  assert.equal(sanitizeSave(mesruIlerleme(LEVELS.length, 1)).maxLevel, LEVELS.length);
+  // "stars 1..5 kazanilmis -> maxLevel 6" regresyon vakasi:
+  assert.equal(sanitizeSave(mesruIlerleme(5, 1)).maxLevel, 6);
+  // levelWon tek tek de dogru: kanit yoksa false, varsa true.
+  assert.equal(levelWon(1, {}, {}), false);
+  assert.equal(levelWon(1, {}, { 1: kazanilanSkor(1, 1) }), true);
+  assert.equal(levelWon(LEVELS.length + 1, {}, { [LEVELS.length + 1]: 99999 }), false,
+    "olmayan seviye kazanilamaz");
+});
+
+test("BULGU 8 [ONEMLI]: yildiz PUANDAN turetilir, kayittan okunmaz", () => {
+  // OLCULDU: stars[1]=3 ama highScores[1]=1 -> 3 yildiz kabul ediliyordu
+  // (3 yildiz LEVELS[0].target3 = 21500 puan ister).
+  const s = sanitizeSave({ stars: { 1: 3 }, highScores: { 1: 1 } });
+  assert.equal(s.stars["1"], undefined, "1 puan yildiz vermez");
+  assert.equal(s.highScores["1"], 1, "skor kaydi silinmez, yildiz KIRPILIR");
+
+  // KONTROL: puan gercekten yetiyorsa 3 yildiz AYNEN durur.
+  const iyi = sanitizeSave({ stars: { 1: 3 }, highScores: { 1: kazanilanSkor(1, 3) } });
+  assert.equal(iyi.stars["1"], 3);
+  assert.equal(computeStars(kazanilanSkor(1, 3), LEVELS[0]), 3);
+  // KONTROL 2: yildiz alani HIC yazilmamis ama puan yeterliyse yildiz TURETILIR.
+  const turetilen = sanitizeSave({ highScores: { 1: kazanilanSkor(1, 2) } });
+  assert.equal(turetilen.stars["1"], 2);
+  assert.equal(reachableProgress({}, { 1: kazanilanSkor(1, 2) }).maxLevel, 2);
+});
+
+test("BULGU 9 [ONEMLI]: para KAZANILANDAN fazla olamaz", () => {
+  // OLCULDU: {"coins":999999999,"stats":{"lifetimeCoinsEarned":0}} aynen kabul.
+  assert.equal(sanitizeSave({ coins: 999999999, stats: { lifetimeCoinsEarned: 0 } }).coins,
+    STARTER_COINS);
+  assert.equal(sanitizeSave({ coins: 999999999, stats: { lifetimeCoinsEarned: 900 } }).coins,
+    STARTER_COINS + 900);
+  assert.equal(maxReachableCoins({ lifetimeCoinsEarned: 900 }), STARTER_COINS + 900);
+
+  // KONTROL: mesru para AYNEN kalir (asiri kirpma yok).
+  assert.equal(sanitizeSave({ coins: 320, stats: { lifetimeCoinsEarned: 900 } }).coins, 320);
+  // KONTROL 2: yeni oyuncunun baslangic parasi silinmez.
+  assert.equal(sanitizeSave({}).coins, STARTER_COINS);
+  assert.equal(sanitizeSave({ coins: STARTER_COINS }).coins, STARTER_COINS);
+});
+
+test("BULGU 10 [ENGEL]: sisirilmis stats / `false` basarim BEDAVA PARA VERMEZ", () => {
+  // OLCULDU: uydurma stats -> checkUnlocks 5 basarim + 310 coin;
+  //          achievements[*]=false yazmak ayni 310 coin'i HER YUKLEMEDE tekrar
+  //          odetiyordu (sonsuz para dongusu).
+  const sisirilmis = sanitizeSave({
+    stats: {
+      lifetimeMatches: 1, lifetimeCascadesBig: 99, lifetimeColorBombs: 99,
+      lifetimeCoinsEarned: 99999, bestWinStreak: 99,
+    },
+    achievements: {},
+  });
+  assert.equal(checkUnlocks(sisirilmis).rewardCoins, 0, "bedava basarim parasi YOK");
+  // Alanlar arasi kirpma gercekten uygulanmis mi?
+  assert.equal(sisirilmis.stats.lifetimeCascadesBig, 1, "4x kademe <= eslesme");
+  assert.equal(sisirilmis.stats.lifetimeColorBombs, 0, "bomba <= uretilen ozel seker");
+  assert.equal(sisirilmis.stats.bestWinStreak, 0, "seri <= galibiyet");
+
+  // `false` yazarak odulu tekrar alma yolu: bayrak yuklemede TURETILIYOR.
+  const tekrar = sanitizeSave({
+    stats: { lifetimeMatches: 500, lifetimeSpecialsMade: 60, lifetimeCascadesBig: 50,
+             lifetimeColorBombs: 50, lifetimeCoinsEarned: 5000, lifetimeWins: 9, bestWinStreak: 9 },
+    achievements: { first_match: false, cascade_master: false, coin_hoarder: false },
+  });
+  assert.equal(checkUnlocks(tekrar).rewardCoins, 0, "ikinci kez odenmez");
+  assert.equal(tekrar.achievements.first_match, true, "kosul saglaniyorsa bayrak ACIK");
+  assert.equal(tekrar.achievements.cascade_master, true);
+
+  // KONTROL: MESRU istatistikler AYNEN kalir, kirpilmaz.
+  const mesru = sanitizeSave({
+    stats: { lifetimeMatches: 500, lifetimeSpecialsMade: 60, lifetimeCascadesBig: 50,
+             lifetimeColorBombs: 12, lifetimeCoinsEarned: 5000, lifetimeWins: 9,
+             bestWinStreak: 5, bestCascadeLevel: 6 },
+  });
+  assert.equal(mesru.stats.lifetimeCascadesBig, 50);
+  assert.equal(mesru.stats.lifetimeColorBombs, 12);
+  assert.equal(mesru.stats.bestWinStreak, 5);
+  assert.equal(mesru.stats.bestCascadeLevel, 6);
+  assert.deepEqual(clampStats({ lifetimeMatches: 10, lifetimeSpecialsMade: 4, lifetimeColorBombs: 2 }).lifetimeColorBombs, 2);
+  // KONTROL 2: mesru olarak acilmis bir basarim KAYBOLMAZ.
+  assert.equal(sanitizeSave({ achievements: { level_10: true } }).achievements.level_10, true);
+});
+
+test("BULGU 11 [ENGEL]: gorev HAVUZA karsi dogrulanir (uydurma odul odenmez)", () => {
+  const uydurma = [0, 1, 2].map((i) => ({
+    id: `para_basmaca${i}`, event: "win", desc: "x",
+    target: 1, progress: 0, reward: 999999999, claimed: false,
+  }));
+  assert.deepEqual(sanitizeQuests(uydurma), [], "havuzda olmayan id");
+  assert.deepEqual(sanitizeQuests([havuzGorevi(0, { reward: 500000 })]), [], "sisirilmis odul");
+  assert.deepEqual(sanitizeQuests([havuzGorevi(0, { target: 1 })]), [], "kolaylastirilmis hedef");
+  assert.deepEqual(sanitizeQuests([havuzGorevi(0, { event: undefined })]), [],
+    "`event` YOKSA gorev gun boyu ILERLEMEZ -- olu gun");
+  assert.deepEqual(sanitizeQuests([havuzGorevi(0), havuzGorevi(0)]), [],
+    "ayni gorev iki kez odenemez");
+  // Uydurma liste 'taze' sayilip gunun yenilenmesini de engellemez.
+  const s = sanitizeSave({ dailyQuests: uydurma, lastQuestRefreshDateStr: "2026-08-07" });
+  assert.equal(needsQuestRefresh(s, "2026-08-07"), true);
+
+  // KONTROL: quests.js'in URETTIGI gerçek gun AYNEN gecer.
+  const gun = withFakeDay("2026-08-07", () => ensureDailyQuests(sanitizeSave({})));
+  assert.equal(sanitizeQuests(gun.dailyQuests).length, 3, "mesru gun elenmemeli");
+  assert.equal(gun.dailyQuests.every(isValidQuest), true);
+  assert.equal(needsQuestRefresh(sanitizeSave(gun), "2026-08-07"), false);
+  // Ilerlemis/tamamlanmis mesru gorev de gecerlidir.
+  assert.equal(isValidQuest(havuzGorevi(0, { progress: QUEST_POOL[0].target, claimed: true })), true);
+});
+
+test("BULGU 12 [KUCUK]: envanter BOOSTER_DEFS ve ULASILABILIR sayiya kirpilir", () => {
+  // OLCULDU: {"hammer":9999,"UYDURMA_BOOSTER":9999} aynen kabul ediliyordu
+  // (9999 cekic = 999.900 coin'lik esya, UI'da gorunmeyen sessiz cop).
+  const s = sanitizeSave({
+    inventory: { hammer: 9999, UYDURMA_BOOSTER: 9999, shuffle: "7" },
+    stats: { lifetimeCoinsEarned: 0 },
+  });
+  assert.equal("UYDURMA_BOOSTER" in s.inventory, false, "bilinmeyen booster elendi");
+  assert.equal(s.inventory.hammer <= 100, true, `hammer=${s.inventory.hammer}`);
+  assert.equal(maxReachableBooster("hammer", 0), 1);
+  assert.equal(maxReachableBooster("UYDURMA_BOOSTER", 999999), 0);
+
+  // KONTROL: mesru envanter AYNEN kalir.
+  const mesru = sanitizeSave({ inventory: { shuffle: 2, hammer: 3 }, stats: { lifetimeCoinsEarned: 900 } });
+  assert.equal(mesru.inventory.shuffle, 2);
+  assert.equal(mesru.inventory.hammer, 3);
+  assert.equal(maxReachableBooster("shuffle", 900) >= 2, true);
+  assert.equal(Object.keys(BOOSTER_DEFS).every((id) => maxReachableBooster(id, 100000) > 0), true);
+});
+
+test("BULGU 13 [KUCUK]: GELECEK tarihli gunluk giris kaydi KILITLEMEZ", () => {
+  // OLCULDU: lastLoginDateStr='2099-12-31' -> daysSince -26809 -> oyuncu
+  // 2099'a kadar gunluk odul ALAMIYOR (kalici kilitlenme).
+  const now = new Date("2026-08-07T12:00:00").getTime();
+  const s = sanitizeSave({ lastLoginDateStr: "2099-12-31", loginDay: 7 }, now);
+  assert.equal(s.lastLoginDateStr, "2026-08-07", "bugune kirpildi");
+  assert.equal(evaluateDailyLogin(s, "2026-08-08").showModal, true, "kilit ACILDI");
+  // KONTROL (BULGU 5 ile celismemeli): bugun BEDAVA ikinci odul dogmaz.
+  assert.equal(evaluateDailyLogin(s, "2026-08-07").showModal, false);
+  // KONTROL 2: GECMIS tarihe dokunulmaz.
+  const g = sanitizeSave({ lastLoginDateStr: "2026-08-01", loginDay: 3 }, now);
+  assert.equal(g.lastLoginDateStr, "2026-08-01");
+  assert.equal(g.loginDay, 3);
+  // KONTROL 3: tarihsiz seri olmaz (App.js ikisini birlikte yazar).
+  assert.equal(sanitizeSave({ loginDay: 7 }, now).loginDay, 0);
+});
+
+test("BULGU 14 [KUCUK]: bozuk `lives` degeri TAM CAN odulu vermez", () => {
+  const now = 1_800_000_000_000;
+  // OLCULDU: settleLives({lives:"abc"}) -> 5, {lives:{}} -> 5, 1e400 -> 5.
+  for (const bozuk of ["abc", {}, [], true, NaN, Infinity, "  "]) {
+    assert.equal(settleLives({ lives: bozuk, lastLifeRegenMs: now }, now).lives, 0,
+      `lives=${JSON.stringify(bozuk)}`);
+  }
+  assert.equal(msUntilNextLife({ lives: "abc", lastLifeRegenMs: now }, now) > 0, true,
+    "bozuk can 'dolu' sayilip sayaci sifirlamaz");
+
+  // KONTROL: alan YOKSA yeni oyuncu tam can alir; sayisal degerler bozulmaz.
+  assert.equal(settleLives({ lastLifeRegenMs: now }, now).lives, LIVES_MAX);
+  assert.equal(settleLives({ lives: null, lastLifeRegenMs: now }, now).lives, LIVES_MAX);
+  assert.equal(settleLives({ lives: 3, lastLifeRegenMs: now }, now).lives, 3);
+  assert.equal(settleLives({ lives: "3", lastLifeRegenMs: now }, now).lives, 3);
+  assert.equal(msUntilNextLife({ lives: LIVES_MAX, lastLifeRegenMs: now }, now), 0);
+});
+
+test("BULGU 15 [KUCUK]: saat ILERI alinip GERI alininca can kazanmak durmaz", () => {
+  // Senaryo: oyuncu saati 30 gun ileri aliyor (can dolduruyor), sonra geri
+  // aliyor -> anchor GELECEKTE kaliyordu ve elapsed hep negatif oldugu icin
+  // rejenerasyon bir daha calismiyordu.
+  const now = 1_800_000_000_000;
+  const ileri = now + 30 * 24 * 60 * 60 * 1000;
+
+  // 1) Saat ileriyken oynanmis: takeLife anchor'i ileri tarihe yaziyor.
+  const ileriKayit = takeLife({ lives: LIVES_MAX, lastLifeRegenMs: ileri }, ileri);
+  assert.equal(ileriKayit.lives, LIVES_MAX - 1);
+
+  // 2) Saat geri alindi -> yukleme anchor'i kirpiyor (birinci katman).
+  const yuklenen = sanitizeSave({ lives: ileriKayit.lives, lastLifeRegenMs: ileriKayit.lastLifeRegenMs }, now);
+  assert.equal(yuklenen.lastLifeRegenMs <= now, true);
+
+  // 3) Kirpilmamis kayit dogrudan verilse bile lives.js kendi kirpmasini yapar
+  //    (ikinci katman). DIKKAT: kirpma her cagrida `now`a gore yapildigi icin
+  //    cikis yolu ancak KIRPILMIS ANCHOR YAZILDIKTAN sonra ilerler — App.js:210
+  //    tam bunu yapiyor (settleLives -> saveProgress).
+  const kirpilmis = settleLives({ lives: 0, lastLifeRegenMs: ileri }, now);
+  assert.equal(kirpilmis.lastLifeRegenMs <= now, true);
+  const sonra = settleLives(kirpilmis, now + LIFE_REGEN_MS);
+  assert.equal(sonra.lives, 1);
+  assert.equal(msUntilNextLife({ lives: 0, lastLifeRegenMs: ileri }, now) <= LIFE_REGEN_MS, true);
+  // KONTROL: gecmisteki anchor bozulmadan calismaya devam ediyor.
+  assert.equal(settleLives({ lives: 1, lastLifeRegenMs: now - 2 * LIFE_REGEN_MS }, now).lives, 3);
 });
 
 test("UCTAN UCA: elle bozulmus kayit yuklenir, gun devreder, ekran cizilir", () => {
