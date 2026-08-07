@@ -200,9 +200,25 @@ export function levelWon(n, stars, highScores) {
   const lv = LEVELS[n - 1];
   if (!lv) return false;
   const score = safeInt(highScores?.[String(n)], 0, 0);
-  if (score <= 0) return false;
-  if (score >= lv.target1) return true;
-  return safeInt(stars?.[String(n)], 0, 0, 3) >= 1;
+  // TEK OLCUT: seviye ancak HEDEF PUANA ulasilmissa kazanilmistir.
+  //
+  // ⚠️ Burada bir zamanlar ikinci bir kanit vardi:
+  //     if (score >= lv.target1) return true;
+  //     return safeInt(stars?.[String(n)], 0, 0, 3) >= 1;   // <-- KALDIRILDI
+  // Gerekcesi "seviye tablosu yeniden kalibre edildi, eski mesru kayit
+  // cezalanmasin" idi. Ama o ikinci kanit istismarin UCUNCU turunu acti:
+  // her seviyeye 1 puan + 1 yildiz yazmak zinciri bastan sona sagliyor ve
+  // 30/30 seviye aciliyordu (LevelSelectScreen'de EKRANDA olculdu).
+  //
+  // Kaldirildi cunku gerekcesi OLCULDU ve BOS cikti: bu oyun hic yayinlanmadi
+  // (ASC'de 26 app var, Sugar Blast kaydi YOK; native kabuk yok). Sahada
+  // korunacak TEK BIR eski kayit bile yok -- yani o istisna kimseyi korumuyor,
+  // yalnizca istismari acik tutuyordu.
+  //
+  // Ayrica ic celiskiydi: yazili yildiz burada KANIT sayilip
+  // `reachableProgress` icinde ATILIYORDU; sonuc `maxLevel=30` ama `stars={}`.
+  // Ayni veriye bir yerde guvenip baska yerde guvenmemek kusurdur.
+  return score >= lv.target1;
 }
 
 /**
@@ -221,6 +237,8 @@ export function reachableProgress(rawStars, rawHighScores) {
   while (n <= LEVELS.length && levelWon(n, stars, highScores)) {
     const score = highScores[String(n)];
     outHigh[String(n)] = score;
+    // TEK KAYNAK: yildiz da, kilit de YALNIZCA skordan turetilir. Yazili
+    // yildiza hicbir yerde inanilmaz (bkz. `levelWon` icindeki gerekce).
     const kazanilan = computeStars(score, LEVELS[n - 1]);
     if (kazanilan > 0) outStars[String(n)] = kazanilan;
     n++;

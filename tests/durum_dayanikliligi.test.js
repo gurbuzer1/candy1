@@ -554,7 +554,28 @@ test("BULGU 8 [ONEMLI]: yildiz PUANDAN turetilir, kayittan okunmaz", () => {
   // (3 yildiz LEVELS[0].target3 = 21500 puan ister).
   const s = sanitizeSave({ stars: { 1: 3 }, highScores: { 1: 1 } });
   assert.equal(s.stars["1"], undefined, "1 puan yildiz vermez");
-  assert.equal(s.highScores["1"], 1, "skor kaydi silinmez, yildiz KIRPILIR");
+
+  // ⚠️ BU BEKLENTI 2026-08-07'de DEGISTI ve sebebi KAYNAKTAN dogrulandi.
+  // ESKIDEN: "skor kaydi silinmez, yildiz KIRPILIR" -> highScores["1"] === 1.
+  // O beklenti, `levelWon`'un yazili yildizi ikinci kanit saydigi GEVSEK
+  // kurala aitti; ayni gevseklik istismarin ucuncu turunu aciyordu (her
+  // seviyeye 1 puan + 1 yildiz yazmak 30/30 seviye aciyordu).
+  //
+  // YENI KURAL: seviye ancak `score >= target1` ise kazanilmistir. Hedefin
+  // ALTINDA bir skor kaydi MESRU OLARAK VAR OLAMAZ, cunku:
+  //   GameScreen.js:687  const won = currentScore >= levelConfig.target1;
+  //   App.js:367-375     // Progression (win only)  ->  if (result.won) { ... }
+  // yani highScores YALNIZCA kazanista yazilir. Dolayisiyla 1 puanlik kayit
+  // veri degil UYDURMADIR; dusurulmesi veri kaybi sayilmaz.
+  assert.equal(
+    s.highScores["1"], undefined,
+    "hedefin ALTINDA skor kaydi mesru olarak uretilemez -> dusurulur",
+  );
+
+  // KONTROL: kural "her seyi sil"e donusmedi -- hedefi TUTAN skor AYNEN durur.
+  const tamHedef = sanitizeSave({ highScores: { 1: LEVELS[0].target1 } });
+  assert.equal(tamHedef.highScores["1"], LEVELS[0].target1, "hedefi tutan skor korunur");
+  assert.equal(tamHedef.maxLevel, 2, "hedefi tutan skor seviye 2'yi acar");
 
   // KONTROL: puan gercekten yetiyorsa 3 yildiz AYNEN durur.
   const iyi = sanitizeSave({ stars: { 1: 3 }, highScores: { 1: kazanilanSkor(1, 3) } });
@@ -760,4 +781,46 @@ test("UCTAN UCA: elle bozulmus kayit yuklenir, gun devreder, ekran cizilir", () 
   })));
   assert.doesNotMatch(metin, /NaN|undefined/);
   assert.match(metin, /0 \//);
+});
+
+/**
+ * KOR NOKTA KAPATMA — istismarin UCUNCU turu.
+ *
+ * Dogrulama ajani olctu: "BULGU 7" testi yalnizca SEYREK sahte kayitlari
+ * deniyordu ({stars:{30:3}}, {highScores:{29:1}}). Bunlarin hepsi 1..29
+ * zincirini kirdigi icin zaten geciyordu. YOGUN vaka -- her seviyeye kucuk
+ * ama SIFIRDAN BUYUK bir puan + yildiz yazmak -- hic denenmemisti ve
+ * zinciri bastan sona sagliyordu: LevelSelectScreen'de EKRANDA 30/30 acik.
+ *
+ * Ders: "zincir kurali var" demek yetmez; zinciri SAGLAYAN sahte kaydi da
+ * denemek gerekir. Bir kuralin sinavi, kurali ihlal eden girdiyle degil,
+ * kurali SAGLAYARAK gecmeye calisan girdiyle yapilir.
+ */
+test("BULGU 7 [ENGEL] KOR NOKTA: YOGUN sahte kayit (her seviyeye 1 puan) seviye ACMAZ", () => {
+  const yogun = { stars: {}, highScores: {} };
+  for (let n = 1; n <= LEVELS.length; n++) {
+    yogun.stars[String(n)] = 1;
+    yogun.highScores[String(n)] = 1;   // > 0, ama target1'in cok altinda
+  }
+  const s = sanitizeSave(yogun);
+  assert.equal(s.maxLevel, 1, "her seviyeye 1 puan yazmak zinciri SAGLAMAMALI");
+  assert.deepEqual(s.stars, {}, "uydurma yildiz kalmamali");
+  assert.deepEqual(s.highScores, {}, "uydurma skor kalmamali");
+
+  // Ic tutarlilik: sanitize edilmis kayit YENIDEN sanitize edilince degismemeli.
+  // (Eski kusur tam buradaydi: maxLevel HAM girdiden, yildizlar TEMIZ veriden
+  // hesaplaniyordu -> `maxLevel=30` ama `stars={}` gibi imkansiz bir kayit.)
+  const ikinci = sanitizeSave(s);
+  assert.equal(ikinci.maxLevel, s.maxLevel, "sanitize IDEMPOTENT olmali");
+  assert.deepEqual(ikinci.stars, s.stars);
+
+  // KONTROL VAKASI: ayni YOGUNLUKTA ama MESRU kayit hicbir sey kaybetmemeli.
+  const mesru = { stars: {}, highScores: {} };
+  for (let n = 1; n <= LEVELS.length; n++) {
+    mesru.highScores[String(n)] = LEVELS[n - 1].target1;   // her seviyeyi gercekten gecmis
+    mesru.stars[String(n)] = 1;
+  }
+  const m = sanitizeSave(mesru);
+  assert.equal(m.maxLevel, LEVELS.length, "30 seviyeyi GERCEKTEN gecen oyuncu 30'u gorur");
+  assert.equal(Object.keys(m.highScores).length, LEVELS.length, "mesru skorlar korunur");
 });
