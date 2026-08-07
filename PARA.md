@@ -57,3 +57,51 @@ değil ama gönderilebilir de değil, ve asıl soru para değil:
 
 Bu üçü cevaplanmadan burada yapılacak doğru iş **yok**; K1 kararı yazıldı ve app
 yerinde bırakıldı.
+
+---
+
+## 2026-08-07 — İlk testler eklendi, ve motorun "saf" olmadığı ortaya çıktı
+
+Emre sordu: *"yeni oyun yok mu casual? multi level?"* Ölçüm şunu gösterdi:
+**var, ve bu o.** 30 seviye (her biri hamle limiti + 3 yıldızlı hedef),
+`LevelSelectScreen`, booster dükkânı, günlük görevler, başarımlar, günlük giriş
+— 5.600 satır. Yani prototip değil, tamamlanmış bir casual match-3.
+
+### 🔴 Ama tek bir testi yoktu — ve sebebi yapısaldı
+
+`BoardEngine.js`'in ilk satırı *"Pure game logic — no React, no animations"*
+diyor. Sabitlerini `constants/game.js`'ten alıyordu ve **o dosyanın ilk satırı**
+`import { Dimensions } from 'react-native'`.
+
+Yani motor kendini saf ilan ediyordu ama **import zinciri onu React Native'e
+bağlıyordu**: düz `node` ile import edilemiyor, dolayısıyla sınanamıyordu.
+Bir dosyanın kendi yorumundaki iddia, import grafiği tarafından çürütülüyordu.
+
+**Düzeltme:** kural sabitleri (`COLS`, `ROWS`, `CANDY_COUNT`, `SPECIAL`,
+`SCORE_VALUES`) `constants/kural.js`'e ayrıldı; `game.js` hepsini **yeniden dışa
+açıyor**, yani mevcut import'ların hiçbiri değişmedi ve davranış birebir aynı.
+Motorun tek değişikliği import satırı.
+
+### Testler: 9/9 — ve mutasyon sınavından geçti
+
+`tests/tahta_motoru.test.js` kural mantığını ölçüyor: tahta üretimi
+(başlangıçta bedava eşleşme olmamalı), yatay/dikey üçlü, **ikilinin eşleşme
+sayılmaması**, takasın saflığı, çökme sonrası tahtanın dolu kalması, puan
+eğrisi ve zincir çarpanı, geçerli hamle, ipucu.
+
+| mutasyon | sonuç |
+|---|---|
+| eşleşme eşiği `>= 3` → `>= 2` | 🔴 **7/9** — iki test kırmızı |
+| `swapCells` kopya yerine aynı referans (saflık bozuldu) | 🔴 **8/9** — bir test kırmızı |
+| orijinal geri yüklendi | ✅ **9/9**, md5 yedekle birebir |
+
+⚠️ **Bu testler yetmez.** Portföyde ölçülmüş bir ders var: birim testler
+yeşilken canlı oynayışta altı hata çıkmıştı (gerçek `PointerEvent` koşum
+takımı). Burada ölçülen şey **kural mantığı**; dokunma, animasyon ve zamanlama
+kapsam dışı.
+
+### K1 değişmedi
+
+Karar hâlâ **ücretsiz**: oyunda satın alma SDK'sı yok, `economy.js`'teki
+booster/coin ekonomisi tamamen oyun içi. Asıl soru para değil, **ürünün devam
+edip etmeyeceği** — ve şimdi elde ölçülmüş bir cevap var: bitmeye yakın.

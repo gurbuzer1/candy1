@@ -1,4 +1,4 @@
-import { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES } from '../constants/game';
+import { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES } from '../constants/kural.js';
 
 // Pure game logic — no React, no animations. Just the grid state machine.
 

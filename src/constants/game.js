@@ -1,3 +1,6 @@
+// Kural sabitleri kural.js'e tasindi (react-native'siz, sinanabilir olsun diye);
+// buradan YENIDEN DISA ACILIYOR, boylece mevcut import'larin hicbiri degismedi.
+export { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES } from './kural.js';
 import { Dimensions } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
