@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, AppState } from 'react-native';
+import {
+  View, Text, TouchableOpacity, Modal, StyleSheet, ActivityIndicator,
+  AppState, BackHandler,
+} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import HomeScreen from './src/screens/HomeScreen';
 import LevelSelectScreen from './src/screens/LevelSelectScreen';
@@ -23,6 +26,76 @@ import {
 } from './src/constants/economy';
 import { LEVELS } from './src/constants/levels';
 
+// ====================================================================
+// AKIS KARARLARI — SAF FONKSIYONLAR
+//
+// Bunlar bilerek bilesenin DISINA alindi: bir seviyenin baslayip
+// baslamayacagi, "Next Level"in ne yapacagi ve donanim geri tusunun nereye
+// gidecegi artik React'siz sinanabilir (tests/akis_butunlugu.test.js).
+// Eskiden bu kararlar handleNextLevel / handleReplayLevel / handleConfirmBoosters
+// govdelerine gomuluydu ve hicbiri sinanamiyordu.
+// ====================================================================
+
+export const AKIS = {
+  START: 'start',
+  NO_LIVES: 'noLives',
+  FINISHED: 'finished',
+};
+
+/**
+ * CAN KAPISI (bulgu: "Next Level can kapisini atliyor").
+ * Tek dogru kaynak: `settleLives` ile TURETILMIS can sayisi. Kayittaki ham
+ * `save.lives` alanina bakilmaz — regen zamani da hesaba katilir.
+ */
+export function canStartLevel(save, now = Date.now()) {
+  if (!save) return false;
+  return settleLives(save, now).lives > 0;
+}
+
+/**
+ * "Next Level" dugmesinin kararli.
+ * - son seviyeden sonrasi YOK  -> FINISHED (oyuncuya oyunun bittigi soylenir;
+ *   eskiden sessizce seviye listesine dusuruluyordu, dugme yalan soyluyordu)
+ * - can yok                     -> NO_LIVES (eskiden HIC sorulmuyordu)
+ * - aksi halde                  -> START
+ */
+export function nextLevelDecision(currentLevel, save, now = Date.now()) {
+  const cur = Number(currentLevel);
+  const nextNum = (Number.isFinite(cur) ? Math.trunc(cur) : 0) + 1;
+  if (nextNum > LEVELS.length) return { action: AKIS.FINISHED, levelNum: null };
+  if (!canStartLevel(save, now)) return { action: AKIS.NO_LIVES, levelNum: nextNum };
+  return { action: AKIS.START, levelNum: nextNum };
+}
+
+/** "Try Again" karari — ayni kapidan gecer. */
+export function replayDecision(currentLevel, save, now = Date.now()) {
+  const cur = Number(currentLevel);
+  const num = Number.isFinite(cur) ? Math.trunc(cur) : 1;
+  if (!canStartLevel(save, now)) return { action: AKIS.NO_LIVES, levelNum: num };
+  return { action: AKIS.START, levelNum: num };
+}
+
+/**
+ * ANDROID DONANIM GERI TUSU (bulgu: hicbir yerde tanimli degil).
+ * En ustteki katmandan basa dogru: acik modal -> oyun -> seviye listesi -> ana
+ * ekran -> uygulamadan cikis. `blocked` = tusu YUT, hicbir sey yapma
+ * (gunluk giris odulu alinmadan kapanmamali).
+ */
+export function backTarget(ui) {
+  const u = ui || {};
+  if (u.showLogin) return 'blocked';
+  if (u.showGameOver) return 'closeGameOver';
+  if (u.showNoLives) return 'closeNoLives';
+  if (u.showHowTo) return 'closeHowTo';
+  if (u.showQuests) return 'closeQuests';
+  if (u.showShop) return 'closeShop';
+  if (u.showAchievements) return 'closeAchievements';
+  if (u.pendingLevelNum != null) return 'closePreGame';
+  if (u.screen === 'game') return 'quitGame';
+  if (u.screen === 'levels') return 'toHome';
+  return 'exit';
+}
+
 export default function App() {
   const [save, setSave] = useState(null);
   const [screen, setScreen] = useState('home');
@@ -38,6 +111,13 @@ export default function App() {
   const [pendingLoginDay, setPendingLoginDay] = useState(0);
   const [pendingLevelNum, setPendingLevelNum] = useState(null);
   const [toastQueue, setToastQueue] = useState([]);
+  // Oyunun SONU (30. seviyeden sonra) ve CAN KAPISI reddi artik ekranda
+  // gorunur bir cevap uretir; ikisi de eskiden sessizdi.
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [showNoLives, setShowNoLives] = useState(false);
+  // Donanim geri tusu oyun ekranindayken GameScreen'in "cikmak istiyor musun"
+  // onayini acar; sayac artinca GameScreen tepki verir.
+  const [gameBackRequest, setGameBackRequest] = useState(0);
 
   // Tick to refresh life regen display every minute (UI only).
   const [, setMinuteTick] = useState(0);
@@ -76,6 +156,53 @@ export default function App() {
       if (sub && typeof sub.remove === 'function') sub.remove();
     };
   }, []);
+
+  // ------------------------------------------------------------------
+  // DONANIM GERI TUSU (Android)
+  //
+  // Depoda TEK BIR BackHandler yoktu: oyunun ortasinda geri tusu dogrudan
+  // UYGULAMADAN CIKIS demekti (harcanan can + o eldeki tum ilerleme gider).
+  // Karar `backTarget` icinde, saf ve sinanabilir; burada yalnizca uygulanir.
+  //
+  // ⚠️ KAPSAM: RN'de gorunur bir <Modal> Android geri tusunu KENDISI yutar ve
+  // buraya hic ulasmaz. Bu yuzden onRequestClose'u kendi kapsamimdaki
+  // modallere (PreGameBoosterModal + GameScreen'in 2 sonuc modali + asagidaki
+  // 2 yeni modal) ekledim. HowToPlay/DailyLogin/DailyQuests/BoosterShop/
+  // Achievements ayri dosyalarda ve BU GOREVIN KAPSAMI DISINDA — onlarin
+  // dallari burada yine de dogru davranacak sekilde yazildi ama o modaller
+  // acikken olay bu kod yoluna ulasmayabilir.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const onBack = () => {
+      const target = backTarget({
+        showLogin, showGameOver, showNoLives, showHowTo, showQuests, showShop,
+        showAchievements, pendingLevelNum, screen,
+      });
+      switch (target) {
+        case 'blocked': return true;
+        case 'closeGameOver': setShowGameOver(false); return true;
+        case 'closeNoLives': setShowNoLives(false); return true;
+        case 'closeHowTo': setShowHowTo(false); return true;
+        case 'closeQuests': setShowQuests(false); return true;
+        case 'closeShop': setShowShop(false); return true;
+        case 'closeAchievements': setShowAchievements(false); return true;
+        case 'closePreGame': setPendingLevelNum(null); return true;
+        case 'quitGame': setGameBackRequest((n) => n + 1); return true;
+        case 'toHome': setScreen('home'); return true;
+        default: return false; // 'exit' -> isletim sistemi devrali
+      }
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => {
+      if (sub && typeof sub.remove === 'function') sub.remove();
+      else if (BackHandler.removeEventListener) {
+        BackHandler.removeEventListener('hardwareBackPress', onBack);
+      }
+    };
+  }, [
+    showLogin, showGameOver, showNoLives, showHowTo, showQuests, showShop,
+    showAchievements, pendingLevelNum, screen,
+  ]);
 
   useEffect(() => {
     (async () => {
@@ -155,6 +282,17 @@ export default function App() {
   }
 
   function handleConfirmBoosters(selected) {
+    // CAN KAPISI — TEK GECIT.
+    // Eskiden burada `const lifeUpd = takeLife(next); if (lifeUpd) {...}` vardi
+    // ve ELSE DALI YOKTU: takeLife 0 canda null donuyor, sessizce yutuluyor,
+    // asagidaki setScreen('game') KOSULSUZ calisiyordu. Sonuc: "Next Level"
+    // zincirine giren oyuncu 0 canla sinirsiz oynuyordu.
+    if (!canStartLevel(save)) {
+      setPendingLevelNum(null);
+      setShowNoLives(true);
+      return;
+    }
+
     // Consume the chosen pre-game boosters from inventory + 1 life, then start.
     commit((prev) => {
       const next = { ...prev, inventory: { ...prev.inventory } };
@@ -170,6 +308,8 @@ export default function App() {
         next.lives = lifeUpd.lives;
         next.lastLifeRegenMs = lifeUpd.lastLifeRegenMs;
       }
+      // NOT: else dali yok cunku kapi YUKARIDA (canStartLevel). Buraya
+      // gelindiginde can >= 1 oldugu zaten dogrulanmistir.
       return next;
     });
     setGameBoosters({ ...selected });
@@ -199,7 +339,15 @@ export default function App() {
       next.stats.lifetimeCoinsEarned = (prev.stats.lifetimeCoinsEarned || 0) + result.coinsEarned;
 
       // Streak
-      next.winStreak = result.won ? (prev.winStreak || 0) + 1 : 0;
+      // YARIM BIRAKILAN EL (result.abandoned): oyuncu seviyeyi bitirmeden
+      // cikti. O ana kadarki istatistik/gorev ilerlemesi KAYDEDILIR (eskiden
+      // tamami sessizce siliniyordu) ama kazanma serisi KIRILMAZ — birakmak
+      // kaybetmek degildir, kaybetmenin tek olcusu hamlelerin bitmesidir.
+      if (result.abandoned) {
+        next.winStreak = prev.winStreak || 0;
+      } else {
+        next.winStreak = result.won ? (prev.winStreak || 0) + 1 : 0;
+      }
       next.stats.bestWinStreak = Math.max(prev.stats.bestWinStreak || 0, next.winStreak);
 
       // Coins
@@ -246,24 +394,32 @@ export default function App() {
   }
 
   function handleNextLevel() {
-    const nextNum = currentLevel + 1;
-    if (nextNum > LEVELS.length) {
-      setScreen('levels');
+    const d = nextLevelDecision(currentLevel, save);
+    setScreen('levels');
+    if (d.action === AKIS.FINISHED) {
+      // OYUNUN SONU. Eskiden burada sadece `setScreen('levels')` vardi:
+      // yesil "Next Level" dugmesine basan oyuncu hicbir aciklama gormeden
+      // listeye dusuyor ve dugmenin bozuk oldugunu saniyordu.
+      setShowGameOver(true);
+      return;
+    }
+    if (d.action === AKIS.NO_LIVES) {
+      setShowNoLives(true);
       return;
     }
     // Open pre-game booster modal for next level
-    setPendingLevelNum(nextNum);
-    setScreen('levels');
+    setPendingLevelNum(d.levelNum);
   }
 
   function handleReplayLevel() {
     // Same level, fresh attempt. Need to consume a life.
-    if ((save?.lives ?? 0) <= 0) {
-      setScreen('levels');
+    const d = replayDecision(currentLevel, save);
+    setScreen('levels');
+    if (d.action === AKIS.NO_LIVES) {
+      setShowNoLives(true);
       return;
     }
-    setPendingLevelNum(currentLevel);
-    setScreen('levels');
+    setPendingLevelNum(d.levelNum);
   }
 
   function handleBackToLevels() {
@@ -335,6 +491,7 @@ export default function App() {
           onReplay={handleReplayLevel}
           onBack={handleBackToLevels}
           onUseBooster={handleUseBooster}
+          backRequest={gameBackRequest}
         />
       )}
 
@@ -374,6 +531,64 @@ export default function App() {
         onClose={() => setShowAchievements(false)}
       />
 
+      {/*
+        OYUNU BITIRME EKRANI (bulgu: seviye 30'da "Next Level" yalan soyluyor).
+        KAPSAM: yeni seviye uretimi / sonsuz mod YOK. Var olan bitis akisi
+        DURUST hale getirildi: dugme artik oyunun bittigini soyluyor ve
+        oyuncuyu seviye listesine donduruyor.
+      */}
+      <Modal
+        visible={showGameOver}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGameOver(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>You Beat Sugar Blast!</Text>
+            <Text style={styles.modalBody}>
+              All {LEVELS.length} levels complete. There is no Level {LEVELS.length + 1} yet —
+              replay any level to chase 3 stars and a higher score.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowGameOver(false)}
+            >
+              <Text style={styles.modalBtnText}>Back to Levels</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/*
+        CAN KAPISI REDDI (bulgu: "Next Level" can kapisini atliyor).
+        Eskiden can 0 iken de seviye basliyordu; artik reddin bir sesi var.
+      */}
+      <Modal
+        visible={showNoLives}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNoLives(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Out of Lives</Text>
+            <Text style={styles.modalBody}>
+              You need 1 life to start a level. Wait for a life to refill (up to {LIVES_MAX}),
+              or buy a refill from the shop.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowNoLives(false)}
+            >
+              <Text style={styles.modalBtnText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {toastQueue.length > 0 && (
         <AchievementToast
           key={toastQueue[0].id}
@@ -395,5 +610,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a0533',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBox: {
+    width: '84%',
+    borderRadius: 24,
+    padding: 26,
+    alignItems: 'center',
+    backgroundColor: '#2d1260',
+    borderWidth: 2,
+    borderColor: 'rgba(255,215,0,0.35)',
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#ffd700',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  modalBody: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#d7c4ff',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalBtn: {
+    paddingHorizontal: 40,
+    paddingVertical: 13,
+    borderRadius: 26,
+    minWidth: 200,
+    alignItems: 'center',
+    backgroundColor: '#6200ea',
+  },
+  modalBtnText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#fff',
   },
 });

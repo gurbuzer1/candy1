@@ -1,9 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BOOSTER_LIST } from '../constants/economy';
 
 const PREGAME = BOOSTER_LIST.filter((b) => b.type === 'pregame');
+
+/**
+ * SECIM DURUMU YASAM DONGUSU (bulgu: "<- Back" secimi SIFIRLAMIYOR).
+ *
+ * ESKI DAVRANIS: `setSelected({})` yalnizca confirm() ve skip() icindeydi;
+ * "<- Back" dogrudan `onCancel`i cagiriyordu. Bilesen App.js'te KOSULSUZ
+ * render edildigi (yalnizca `visible` degisiyor) icin durum ASLA sifirlanmiyor,
+ * modal bir sonraki seviye icin acildiginda ayni booster'lar SECILI geliyordu.
+ * "Start Level"a basan oyuncu istemedigi booster'i envanterinden HARCIYORDU.
+ *
+ * Karar saf bir fonksiyona alindi ki React'siz sinanabilsin.
+ * `open` = modal gorunur oldu (ikinci katman: cancel bir sekilde kacsa bile
+ * her acilis TEMIZ baslar).
+ */
+export function nextSelection(prev, event, id) {
+  switch (event) {
+    case 'confirm':
+    case 'skip':
+    case 'cancel':
+    case 'open':
+      return {};
+    case 'toggle':
+      return { ...prev, [id]: !prev[id] };
+    default:
+      return prev;
+  }
+}
 
 export default function PreGameBoosterModal({
   visible,
@@ -14,22 +41,35 @@ export default function PreGameBoosterModal({
 }) {
   const [selected, setSelected] = useState({});
 
+  // Modal her ACILISINDA secim temizlenir.
+  useEffect(() => {
+    if (visible) setSelected((s) => nextSelection(s, 'open'));
+  }, [visible]);
+
   function toggle(id) {
-    setSelected((s) => ({ ...s, [id]: !s[id] }));
+    setSelected((s) => nextSelection(s, 'toggle', id));
   }
 
   function confirm() {
     onConfirm(selected);
-    setSelected({});
+    setSelected((s) => nextSelection(s, 'confirm'));
   }
 
   function skip() {
     onConfirm({});
-    setSelected({});
+    setSelected((s) => nextSelection(s, 'skip'));
+  }
+
+  function cancel() {
+    // ONCE sifirla, SONRA kapat: geri donen oyuncu temiz bir modal bulur.
+    setSelected((s) => nextSelection(s, 'cancel'));
+    onCancel?.();
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    // onRequestClose: Android donanim geri tusu. Eskiden tanimsizdi ve tus
+    // OLU idi -- oyuncu bu modalda sikisiyordu.
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={cancel}>
       <View style={styles.overlay}>
         <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.box}>
           <Text style={styles.title}>Level {levelNum}</Text>
@@ -70,7 +110,7 @@ export default function PreGameBoosterModal({
             <Text style={styles.skipText}>Skip & Start</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={onCancel} style={styles.cancelBtn} activeOpacity={0.7}>
+          <TouchableOpacity onPress={cancel} style={styles.cancelBtn} activeOpacity={0.7}>
             <Text style={styles.cancelText}>← Back</Text>
           </TouchableOpacity>
         </LinearGradient>

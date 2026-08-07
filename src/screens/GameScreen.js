@@ -52,6 +52,25 @@ const CASCADE_FALL_MS = 420;
 
 const COLOR_NAMES = ['clearRed', 'clearOrange', 'clearYellow', 'clearGreen', 'clearBlue', 'clearPurple'];
 
+/**
+ * HEDEF PUAN METNI (bulgu: hedef puan oyunun HICBIR yerinde yazmiyordu).
+ *
+ * ESKI DAVRANIS: `levelConfig.target1/2/3` hicbir yerde METIN olarak
+ * gorunmuyordu. HUD sadece SCORE + MOVES, ProgressBar sadece cizgi ve yildiz
+ * isaretleri gosteriyordu. 12.340 puanla kaybeden oyuncu hedefin 12.500 mu
+ * 40.000 mi oldugunu ogrenemiyor, "Try Again" mi booster mi gerektigine karar
+ * veremiyordu.
+ *
+ * Saf fonksiyon; sinanabilir.
+ */
+export function shortfallLabel(score, target) {
+  const s = Number.isFinite(score) ? score : 0;
+  const t = Number.isFinite(target) ? target : 0;
+  const diff = t - s;
+  if (diff <= 0) return `Target ${t.toLocaleString()} — reached`;
+  return `Target ${t.toLocaleString()} — ${diff.toLocaleString()} short`;
+}
+
 // COLOR FRENZY TETIKLEYICISI (bulgu 2).
 //
 // ESKI (KIRIK): tahtadaki en kalabalik rengi sayip FRENZY_THRESHOLD (=14) ile
@@ -139,8 +158,10 @@ export default function GameScreen({
   onReplay,
   onBack,
   onUseBooster,
+  backRequest = 0,
 }) {
   const levelConfig = LEVELS[levelNum - 1];
+  const isFinalLevel = levelNum >= LEVELS.length;
   const startMoves = levelConfig.moves + (boosters.plus5 ? 5 : 0);
 
   const [grid, setGrid] = useState(() => initBoard());
@@ -152,6 +173,8 @@ export default function GameScreen({
   const [cascadeLabel, setCascadeLabel] = useState('');
   const [showComplete, setShowComplete] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
+  // Oyun ortasinda cikis ONAYI (bulgu: uyari yok, can gider, ilerleme silinir).
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const [earnedStars, setEarnedStars] = useState(0);
   const [coinsEarned, setCoinsEarned] = useState(0);
   const [coinBreakdown, setCoinBreakdown] = useState(null);
@@ -687,7 +710,44 @@ export default function GameScreen({
     return { base, cascade, mult, total, newStreak };
   }
 
-  function emitResult(won, stars, breakdown) {
+  // ------------------------------------------------------------------
+  // OYUN ORTASINDA CIKIS (bulgu: '<-' tusu uyari yok, can gider, ilerleme
+  // kaydedilmeden silinir).
+  //
+  // ESKI DAVRANIS: HUD'un sol ustundeki 40x40 '<-' dugmesi DOGRUDAN
+  // App.handleBackToLevels'i cagiriyordu. `endedRef` hic tetiklenmedigi icin
+  // `emitResult` CALISMIYORDU: sessionRef'te biriken matches, striped/wrapped
+  // sayaci, candiesByColor, bestCascadeLevel ve tum quest event'leri
+  // kayboluyordu. Can ise seviyeye girerken zaten harcanmisti.
+  //
+  // YENI: once ONAY sorulur; onaylanirsa o ana kadarki ilerleme `abandoned`
+  // bayragiyla App'e GONDERILIR (istatistik + gorevler kaydedilir, kazanma
+  // serisi kirilmaz, coin verilmez, yildiz/high-score yazilmaz).
+  // ------------------------------------------------------------------
+  function requestQuit() {
+    if (endedRef.current) {
+      // Seviye zaten bitmis (sonuc modali acik): sorulacak bir sey yok.
+      onBack?.();
+      return;
+    }
+    setShowQuitConfirm(true);
+  }
+
+  function confirmQuit() {
+    setShowQuitConfirm(false);
+    if (!endedRef.current) {
+      endedRef.current = true;
+      emitResult(false, 0, { base: 0, cascade: 0, mult: 1, total: 0 }, true);
+    }
+    onBack?.();
+  }
+
+  // App.js'teki donanim geri tusu ayni onayi acar (backRequest sayaci artar).
+  useEffect(() => {
+    if (backRequest > 0) requestQuit();
+  }, [backRequest]);
+
+  function emitResult(won, stars, breakdown, abandoned = false) {
     const s = sessionRef.current;
     const questEvents = [
       ...(won ? [{ type: 'win', value: 1 }] : []),
@@ -702,6 +762,7 @@ export default function GameScreen({
     onLevelEnd?.({
       levelNum,
       won,
+      abandoned,
       score: scoreRef.current,
       stars,
       coinsEarned: breakdown.total,
@@ -764,7 +825,7 @@ export default function GameScreen({
       <AnimatedBackground />
 
       <View style={styles.hud}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
+        <TouchableOpacity style={styles.backBtn} onPress={requestQuit}>
           <Text style={styles.backBtnText}>←</Text>
         </TouchableOpacity>
 
@@ -796,6 +857,23 @@ export default function GameScreen({
         target2={levelConfig.target2}
         target3={levelConfig.target3}
       />
+
+      {/*
+        HEDEF PUAN — eskiden oyunun HICBIR yerinde SAYI olarak yazmiyordu.
+        HUD sadece SCORE + MOVES gosteriyordu, ProgressBar sadece cizgi ve
+        yildiz isaretleri ciziyordu. HowToPlayModal "Reach the target score
+        before you run out of moves" diye ogretiyor ama o hedef GORUNMUYORDU.
+        Tam genislikte, HUD'un yerlesimini zorlamadan yaziliyor; ucu de var ki
+        oyuncu 2. ve 3. yildizi da olcebilsin.
+      */}
+      <View style={styles.targetRow}>
+        <Text style={styles.targetRowText}>
+          {`Target ★ ${levelConfig.target1.toLocaleString()}`}
+          <Text style={styles.targetRowDim}>
+            {`   ★★ ${levelConfig.target2.toLocaleString()}   ★★★ ${levelConfig.target3.toLocaleString()}`}
+          </Text>
+        </Text>
+      </View>
 
       <View style={styles.boosterRow}>
         <TouchableOpacity
@@ -876,8 +954,43 @@ export default function GameScreen({
 
       {chainBanner && <ChainBanner count={chainBanner.count} />}
 
+      {/* Quit Confirm Modal — oyun ortasinda cikis */}
+      <Modal
+        visible={showQuitConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowQuitConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Quit this level?</Text>
+            <Text style={styles.quitBody}>
+              The life you spent will NOT come back and Level {levelNum} stays unfinished.
+              Your quest and stat progress from this round is saved.
+            </Text>
+
+            <TouchableOpacity onPress={() => setShowQuitConfirm(false)}>
+              <LinearGradient colors={['#4cff50', '#00c853']} style={styles.modalBtn}>
+                <Text style={styles.modalBtnTextGreen}>Keep Playing</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={confirmQuit}>
+              <LinearGradient colors={['#7c4dff', '#6200ea']} style={styles.modalBtnSecondary}>
+                <Text style={styles.modalBtnText}>Quit Level</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </LinearGradient>
+        </View>
+      </Modal>
+
       {/* Level Complete Modal */}
-      <Modal visible={showComplete} transparent animationType="fade">
+      <Modal
+        visible={showComplete}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowComplete(false); onBack?.(); }}
+      >
         <View style={styles.modalOverlay}>
           {showComplete && <CoinShower />}
           <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.modalContent}>
@@ -888,11 +1001,19 @@ export default function GameScreen({
               ))}
             </View>
             <Text style={styles.modalScore}>Score: {score.toLocaleString()}</Text>
+            <Text style={styles.targetLine}>{shortfallLabel(score, levelConfig.target1)}</Text>
             {coinBreakdown && <CoinBreakdownView b={coinBreakdown} />}
 
+            {/*
+              SON SEVIYEDE DUGME YALAN SOYLEMEZ. LEVELS.length=30 ve 31. seviye
+              YOK; eskiden yine "Next Level" yaziyor, basinca hicbir aciklama
+              olmadan seviye listesine dusuruyordu.
+            */}
             <TouchableOpacity onPress={() => { setShowComplete(false); onNextLevel?.(); }}>
               <LinearGradient colors={['#4cff50', '#00c853']} style={styles.modalBtn}>
-                <Text style={styles.modalBtnTextGreen}>Next Level</Text>
+                <Text style={styles.modalBtnTextGreen}>
+                  {isFinalLevel ? 'Finish Game' : 'Next Level'}
+                </Text>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -906,12 +1027,19 @@ export default function GameScreen({
       </Modal>
 
       {/* Level Failed Modal */}
-      <Modal visible={showFailed} transparent animationType="fade">
+      <Modal
+        visible={showFailed}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowFailed(false); onBack?.(); }}
+      >
         <View style={styles.modalOverlay}>
           {showFailed && <FailFlash />}
           <LinearGradient colors={['#3d1f8a', '#2d1260']} style={styles.modalContent}>
             <ShakeText style={styles.modalTitle}>Out of Moves!</ShakeText>
             <Text style={styles.modalScore}>Score: {score.toLocaleString()}</Text>
+            {/* NE KADAR YAKLASTIN — tekrar oynama kararinin TEK girdisi. */}
+            <Text style={styles.targetLine}>{shortfallLabel(score, levelConfig.target1)}</Text>
             <Text style={styles.streakBroken}>Streak reset to 0</Text>
 
             <TouchableOpacity onPress={() => { setShowFailed(false); onReplay?.(); }}>
@@ -1323,6 +1451,37 @@ const styles = StyleSheet.create({
   },
   movesValue: {
     color: '#ffd700',
+  },
+  targetRow: {
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    alignItems: 'center',
+  },
+  targetRowText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#4cff50',
+    letterSpacing: 0.3,
+  },
+  targetRowDim: {
+    fontWeight: '700',
+    color: THEME.textSecondary,
+  },
+  targetLine: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#4cff50',
+    marginBottom: 12,
+    marginTop: -8,
+    textAlign: 'center',
+  },
+  quitBody: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#d7c4ff',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 19,
   },
   movesLow: {
     color: '#ff4757',
