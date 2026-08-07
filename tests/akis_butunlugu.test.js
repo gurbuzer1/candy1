@@ -538,3 +538,51 @@ test('BULGU 6: envanterde olmayan booster secilemez', () => {
   press(findPressableByText(m.tree, 'Color Bomb'));
   assert.equal(collectVisibleText(m.tree).filter((t) => t === '✓').length, 0);
 });
+
+/**
+ * REGRESYON — bu duzeltme turunun KENDI urettigi hata.
+ *
+ * "Geri tusu onay sorsun" duzeltmesi App.js'e artan bir sayac koydu
+ * (`setGameBackRequest(n => n + 1)`) ama SIFIRLAYAN hicbir yer yok. GameScreen
+ * ise App.js:485'te `key={`level_${currentLevel}_${gameSessionId}`}` ile HER
+ * SEVIYEDE YENIDEN MOUNT oluyor ve useEffect ilk render'da da kosuyor.
+ * Sonuc: oyuncu herhangi bir seviyede BIR KEZ geri tusuna bastiktan sonra
+ * SONRAKI HER SEVIYE "Quit this level?" modali ACIK basliyordu.
+ *
+ * Dogru olcut mutlak deger degil DEGISIM: mount anindaki deger taban alinir.
+ */
+test('REGRESYON: backRequest>0 ile MOUNT edilen taze seviye quit modalini ACMAZ', () => {
+  withoutTimers(() => {
+    const quitModal = (m) =>
+      flattenNodes(m.tree)
+        .filter((n) => n.name === 'Modal')
+        .find((n) => collectText(n).some((t) => String(t).includes('Quit this level?')));
+
+    // Oyuncu onceki seviyelerde uc kez geri tusuna basmis; sayac 3'te kalmis.
+    const g = mount(GAME, {
+      levelNum: 4,
+      save: { inventory: {} },
+      boosters: {},
+      onLevelEnd: () => {},
+      onBack: () => {},
+      backRequest: 3,
+    });
+
+    const acilis = quitModal(g);
+    assert.ok(acilis, 'quit modali agacta cizilmeli (visible=false olsa bile)');
+    assert.equal(
+      acilis.props.visible,
+      false,
+      'TAZE seviye quit modali ACIK baslamamali -- sayac >0 diye tetiklenmemeli',
+    );
+
+    // KONTROL VAKASI: sayac gercekten ARTINCA modal acilmali.
+    // (Bu olmadan test "modal hic acilmiyor" diyen bir bozuklugu da yesil gecerdi.)
+    g.setProps({ backRequest: 4 });
+    assert.equal(
+      quitModal(g).props.visible,
+      true,
+      'sayac artinca quit modali ACILMALI -- kontrol vakasi',
+    );
+  });
+});

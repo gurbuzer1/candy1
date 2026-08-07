@@ -743,8 +743,23 @@ export default function GameScreen({
   }
 
   // App.js'teki donanim geri tusu ayni onayi acar (backRequest sayaci artar).
+  //
+  // ⚠️ `backRequest > 0` KOSULU YETMEZ — ve bu tam olarak bir kez kirdi:
+  // App.js sayaci hicbir zaman sifirlamiyor, GameScreen ise her seviyede
+  // `key={`level_${currentLevel}_...`}` yuzunden YENIDEN MOUNT oluyor. useEffect
+  // ilk render'da da kosar; dolayisiyla oyuncu HERHANGI bir seviyede bir kez
+  // geri tusuna bastiktan sonra sayac >0 kaliyor ve SONRAKI HER SEVIYE
+  // "Quit this level?" modali acik basliyordu.
+  //
+  // Dogru olcut mutlak deger degil DEGISIM: mount anindaki degeri hatirla,
+  // yalnizca ondan BUYUdugunde sor. Boylece App.js sifirlasa da sifirlamasa da
+  // dogru calisir.
+  const backRequestBaselineRef = useRef(backRequest);
   useEffect(() => {
-    if (backRequest > 0) requestQuit();
+    if (backRequest > backRequestBaselineRef.current) {
+      backRequestBaselineRef.current = backRequest;
+      requestQuit();
+    }
   }, [backRequest]);
 
   function emitResult(won, stars, breakdown, abandoned = false) {
