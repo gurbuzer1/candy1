@@ -1,12 +1,15 @@
 // Kural sabitleri kural.js'e tasindi (react-native'siz, sinanabilir olsun diye);
 // buradan YENIDEN DISA ACILIYOR, boylece mevcut import'larin hicbiri degismedi.
-export { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES } from './kural.js';
+//
+// ⚠️ `export ... from './kural.js'` TEK BASINA YETMEZ: yeniden disa acma bu
+// dosyaya YEREL BAGLANTI kurmaz, oysa asagida CELL_SIZE hesabi COLS/ROWS'u
+// yerel olarak kullaniyor. O yuzden once import edilir, sonra disa acilir.
+import { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES } from './kural.js';
+export { COLS, ROWS, CANDY_COUNT, SPECIAL, SCORE_VALUES };
+
 import { Dimensions } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-export const COLS = 9;
-export const ROWS = 9;
 
 // Calculate cell size based on screen width with padding
 const BOARD_PADDING = 8;
@@ -34,16 +37,7 @@ export const CANDY_TYPES = {
   PURPLE: 5,
 };
 
-export const CANDY_COUNT = 6;
-
-// Special types
-export const SPECIAL = {
-  NONE: 0,
-  STRIPED_H: 1,
-  STRIPED_V: 2,
-  WRAPPED: 3,
-  COLOR_BOMB: 4,
-};
+// CANDY_COUNT ve SPECIAL kural.js'ten geliyor (yukarida import+export edildi).
 
 // Candy visual configs
 export const CANDY_COLORS = [
@@ -103,16 +97,7 @@ export const CANDY_COLORS = [
   },
 ];
 
-// Score values
-export const SCORE_VALUES = {
-  MATCH_3: 60,
-  MATCH_4: 120,
-  MATCH_5: 200,
-  SPECIAL_STRIPED: 150,
-  SPECIAL_WRAPPED: 200,
-  SPECIAL_COLOR_BOMB: 500,
-  CASCADE_MULTIPLIER: 1.5,
-};
+// SCORE_VALUES kural.js'ten geliyor (yukarida import+export edildi).
 
 // Theme colors
 export const THEME = {
