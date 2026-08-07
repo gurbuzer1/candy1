@@ -23,13 +23,14 @@ import {
 import { LEVELS } from '../constants/levels';
 import {
   COIN_PER_STAR, CASCADE_COIN_BONUS, streakMultiplier,
-  FRENZY_THRESHOLD, FRENZY_COIN_BONUS,
+  FRENZY_THRESHOLD, FRENZY_COIN_BONUS, FRENZY_CHARGE_TARGET, frenzyReadyColor,
   LUCKY_STRIPED_CHANCE, LUCKY_WRAPPED_CHANCE,
   CHAIN_BONUS_THRESHOLD, CRESCENDO_CASCADE_LEVEL,
 } from '../constants/economy';
 import {
   createBoard, swapCells, findMatches, determineSpecials,
   getSpecialRemovals, removeAndCollapse, placeSpecials,
+  reserveSpecials, colorBombSwap,
   calculateScore, hasValidMoves, findHint, shuffleBoard,
 } from '../engine/BoardEngine';
 import { computeStars } from '../utils/storage';
@@ -51,23 +52,32 @@ const CASCADE_FALL_MS = 420;
 
 const COLOR_NAMES = ['clearRed', 'clearOrange', 'clearYellow', 'clearGreen', 'clearBlue', 'clearPurple'];
 
-// Find any color with at least FRENZY_THRESHOLD plain (non-special) candies.
-function detectColorFrenzy(grid) {
-  const cells = [[], [], [], [], [], []];
+// COLOR FRENZY TETIKLEYICISI (bulgu 2).
+//
+// ESKI (KIRIK): tahtadaki en kalabalik rengi sayip FRENZY_THRESHOLD (=14) ile
+// karsilastiriyordu. 81 hucre / 6 renk -> guvercin yuvasi geregi en kalabalik
+// renk HER ZAMAN >= 14. Olculdu: 2000/2000 tahtada esik asildi, dolayisiyla
+// frenzy HER hamlede tetikleniyordu ve 300/300 otomatik oyun 3 yildiz bitiyordu.
+//
+// YENI: tetikleyici tahtanin anlik sayimi degil, oyuncunun BIRIKTIRDIGI sarj.
+// `charge[t]` = o renkten bu seviyede temizlenen toplam seker. Sarj dolunca
+// frenzy patlar ve sayaclar sifirlanir (cagiran taraf sifirlar).
+// FRENZY_THRESHOLD sabiti economy.js'te SILINMEDI ama artik TETIKLEYICI DEGIL.
+function detectColorFrenzy(grid, charge) {
+  const t = frenzyReadyColor(charge);
+  if (t < 0) return null;
+
+  const cells = [];
   for (let c = 0; c < COLS; c++) {
     for (let r = 0; r < ROWS; r++) {
       const candy = grid[c]?.[r];
-      if (candy && candy.special === SPECIAL.NONE && candy.type >= 0 && candy.type < 6) {
-        cells[candy.type].push({ col: c, row: r });
+      if (candy && candy.special === SPECIAL.NONE && candy.type === t) {
+        cells.push({ col: c, row: r });
       }
     }
   }
-  for (let t = 0; t < 6; t++) {
-    if (cells[t].length >= FRENZY_THRESHOLD) {
-      return { type: t, cells: cells[t] };
-    }
-  }
-  return null;
+  if (cells.length === 0) return null;
+  return { type: t, cells };
 }
 
 // Sprinkle freshly-spawned cells with random striped / wrapped specials.
@@ -159,6 +169,9 @@ export default function GameScreen({
   // Color Frenzy may fire at most once per user swap chain; otherwise the
   // refilled board can re-roll into another 14+ color and loop forever.
   const frenzyFiredRef = useRef(false);
+  // Renk basina frenzy sarji — oyuncunun bu seviyede o renkten temizledigi
+  // toplam seker. Frenzy patlayinca SIFIRLANIR (bulgu 2).
+  const frenzyChargeRef = useRef([0, 0, 0, 0, 0, 0]);
 
   const scoreRef = useRef(0);
   const movesRef = useRef(startMoves);
@@ -213,7 +226,19 @@ export default function GameScreen({
       sessionRef.current.hammerUsed += 1;
       if (onUseBooster) onUseBooster('hammer');
       const matchedSet = new Set([`${col},${row}`]);
-      const removingSet = new Set([target.id]);
+      // Cekicle vurulan seker OZEL ise patlamasi TETIKLENIR. Eskiden yalnizca
+      // o tek hucre siliniyordu: 100 coin'lik cekic, ozel sekeri bosa harciyordu
+      // (olculdu: cizgiliye vurunca 1 hucre, eslesmeyle patlasa 9 hucre).
+      getSpecialRemovals(grid, matchedSet).forEach((k) => matchedSet.add(k));
+      const removingSet = new Set();
+      matchedSet.forEach((k) => {
+        const [hc, hr] = k.split(',').map(Number);
+        const cell = grid[hc]?.[hr];
+        if (cell) {
+          removingSet.add(cell.id);
+          if (cell.type >= 0 && cell.type < 6) frenzyChargeRef.current[cell.type] += 1;
+        }
+      });
       setRemovingIds(removingSet);
       tapHaptic();
       frenzyFiredRef.current = false;
@@ -275,8 +300,12 @@ export default function GameScreen({
 
     const swapped = swapCells(grid, c1, r1, c2, r2);
     const { matched } = findMatches(swapped);
+    // Bulgu 3: renk bombasi takas ile aktive edilir. findMatches bombayi
+    // (dogru olarak) hicbir diziye sokmuyor, dolayisiyla aktivasyonun TEK yolu
+    // budur; eskiden bu kod yoktu ve 75 coin'lik booster olu bir satin almaydi.
+    const bombBlast = colorBombSwap(swapped, c1, r1, c2, r2);
 
-    if (matched.size > 0) {
+    if (matched.size > 0 || bombBlast) {
       tapHaptic();
       setGrid(swapped);
 
@@ -286,6 +315,13 @@ export default function GameScreen({
 
       // Chain bonus: increment valid-swap streak; at threshold, gift a striped.
       chainStreakRef.current += 1;
+
+      if (bombBlast) {
+        await delay(SWAP_SETTLE_MS);
+        await detonateColorBomb(swapped, bombBlast);
+        return;
+      }
+
       if (chainStreakRef.current >= CHAIN_BONUS_THRESHOLD) {
         chainStreakRef.current = 0;
         await delay(SWAP_SETTLE_MS);
@@ -331,29 +367,91 @@ export default function GameScreen({
     }
   }
 
-  async function processCascade(currentGrid, cascadeLevel) {
+  /**
+   * RENK BOMBASI PATLAMASI (bulgu 3).
+   * `blast` = colorBombSwap'in dondugu hucre kumesi. Icinde kalan diger ozel
+   * sekerler getSpecialRemovals'in zincir dongusuyle kendileri de patlar.
+   */
+  async function detonateColorBomb(currentGrid, blast) {
+    const all = new Set(blast);
+    getSpecialRemovals(currentGrid, all).forEach((k) => all.add(k));
+
+    const stamp = Date.now();
+    const newActs = [];
+    all.forEach((key) => {
+      const [c, r] = key.split(',').map(Number);
+      const cell = currentGrid[c]?.[r];
+      if (cell && cell.special !== SPECIAL.NONE) {
+        newActs.push({
+          id: `actb_${stamp}_${c}_${r}`,
+          col: c, row: r, special: cell.special, type: cell.type,
+        });
+      }
+    });
+    if (newActs.length > 0) setActivations((prev) => [...prev, ...newActs]);
+
+    sessionRef.current.matches += 1;
+    const idsToRemove = new Set();
+    all.forEach((key) => {
+      const [c, r] = key.split(',').map(Number);
+      const cell = currentGrid[c]?.[r];
+      if (cell) {
+        idsToRemove.add(cell.id);
+        if (cell.type >= 0 && cell.type < 6) {
+          sessionRef.current.candiesByColor[cell.type] += 1;
+          frenzyChargeRef.current[cell.type] += 1;
+        }
+      }
+    });
+
+    scoreRef.current += all.size * 60;
+    setScore(scoreRef.current);
+
+    specialHaptic();
+    setRemovingIds(idsToRemove);
+    setShakeTrigger((n) => n + 1);
+
+    await delay(MATCH_SHRINK_MS);
+
+    let { grid: collapsed, fallMap } = removeAndCollapse(currentGrid, all);
+    collapsed = applyLuckyDrops(collapsed, fallMap);
+    setRemovingIds(EMPTY_SET);
+    setGrid(collapsed);
+
+    await delay(CASCADE_FALL_MS);
+    await processCascade(collapsed, 0);
+  }
+
+  async function processCascade(currentGrid, cascadeLevel, shuffleDepth = 0) {
     const { matched, matchGroups } = findMatches(currentGrid);
 
     if (matched.size === 0) {
       setCascadeLabel('');
 
-      // Color Frenzy: if any one color has accumulated to threshold, all of
-      // them auto-detonate as stripes — board demolition moment.
-      // Fires at most once per user swap; otherwise the random refill can
-      // re-trigger it indefinitely on most boards.
+      // Color Frenzy: oyuncunun biriktirdigi sarj dolduysa o rengin tamami
+      // cizgiliye donup patlar. Sarj SIFIRLANIR -> tekrar birikmesi gerekir.
+      // Ayrica hala hamle basina en fazla bir kez (frenzyFiredRef).
       if (!frenzyFiredRef.current) {
-        const frenzy = detectColorFrenzy(currentGrid);
+        const frenzy = detectColorFrenzy(currentGrid, frenzyChargeRef.current);
         if (frenzy) {
           frenzyFiredRef.current = true;
+          frenzyChargeRef.current = [0, 0, 0, 0, 0, 0];
           await triggerColorFrenzy(currentGrid, frenzy);
           return;
         }
       }
 
       if (!hasValidMoves(currentGrid)) {
-        const shuffled = shuffleBoard(currentGrid);
-        setGrid(shuffled);
-        await delay(500);
+        // Bulgu 4/5: karistirma sonrasi cascade ISLETILMELI, yoksa tahtada
+        // patlamamis eslesme kalir. shuffleBoard artik temiz tahta uretiyor
+        // ama yine de dogrula; `shuffleDepth` sonsuz dongu emniyeti.
+        if (shuffleDepth < 3) {
+          const shuffled = shuffleBoard(currentGrid);
+          setGrid(shuffled);
+          await delay(500);
+          await processCascade(shuffled, 0, shuffleDepth + 1);
+          return;
+        }
         setBusy(false);
         return;
       }
@@ -400,6 +498,17 @@ export default function GameScreen({
     const extraRemovals = getSpecialRemovals(currentGrid, matched);
     extraRemovals.forEach((key) => matched.add(key));
 
+    // BULGU 1 — ozel sekeri TAHTAYA YAZ.
+    // Eskiden placeSpecials collapse'TAN SONRA cagriliyordu ve yalnizca null
+    // hucreye yaziyordu; collapse tum bosluklari doldurdugu icin kosul asla
+    // saglanmiyordu -> 300 otomatik oyunda eslesmeden konan ozel seker: 0.
+    // Simdi hucre silinecekler kumesinden CIKARILIP yerinde ozele ceviriliyor.
+    const reserved = specials.length > 0
+      ? reserveSpecials(currentGrid, matched, specials)
+      : { grid: currentGrid, matched, placed: [] };
+    const workGrid = reserved.grid;
+    const toRemove = reserved.matched;
+
     // Session stat updates
     sessionRef.current.matches += matchGroups.length;
     if (cascadeLevel >= 3) sessionRef.current.bigCascades += 1; // 4x is cascadeLevel 3
@@ -411,11 +520,13 @@ export default function GameScreen({
       else if (s.special === SPECIAL.WRAPPED) sessionRef.current.wrapped += 1;
       else sessionRef.current.striped += 1;
     });
-    matched.forEach((key) => {
+    toRemove.forEach((key) => {
       const [c, r] = key.split(',').map(Number);
       const candy = currentGrid[c]?.[r];
       if (candy && candy.type >= 0 && candy.type < 6) {
         sessionRef.current.candiesByColor[candy.type] += 1;
+        // Frenzy sarji: temizlenen her seker kendi renginin sayacini artirir.
+        frenzyChargeRef.current[candy.type] += 1;
       }
     });
 
@@ -454,26 +565,30 @@ export default function GameScreen({
     if (specials.length > 0) specialHaptic();
 
     const idsToRemove = new Set();
-    matched.forEach((key) => {
+    toRemove.forEach((key) => {
       const [c, r] = key.split(',').map(Number);
       const candy = currentGrid[c]?.[r];
       if (candy) idsToRemove.add(candy.id);
     });
     setRemovingIds(idsToRemove);
 
+    // Ozel sekerler yerine yazildi -> ekranda hemen gorunsunler, silinen
+    // kardeslerinin kuculme animasyonu bitmeden once.
+    if (reserved.placed.length > 0) setGrid(workGrid);
+
     await delay(MATCH_SHRINK_MS);
 
-    let { grid: collapsed, fallMap } = removeAndCollapse(currentGrid, matched);
+    let { grid: collapsed, fallMap } = removeAndCollapse(workGrid, toRemove);
     collapsed = applyLuckyDrops(collapsed, fallMap);
-    if (specials.length > 0) {
-      collapsed = placeSpecials(collapsed, specials);
-    }
+    // NOT: placeSpecials burada CAGRILMIYOR (olu kapiydi -- BoardEngine.js
+    // icindeki aciklamaya bak). Ozel sekerler artik reserveSpecials ile
+    // collapse'TAN ONCE yerine yaziliyor. Fonksiyon ve import silinmedi.
 
     setRemovingIds(EMPTY_SET);
     setGrid(collapsed);
 
     await delay(CASCADE_FALL_MS);
-    await processCascade(collapsed, cascadeLevel + 1);
+    await processCascade(collapsed, cascadeLevel + 1, shuffleDepth);
   }
 
   async function triggerColorFrenzy(currentGrid, frenzy) {
@@ -613,8 +728,21 @@ export default function GameScreen({
     if ((save?.inventory?.shuffle || 0) <= 0) return;
     sessionRef.current.shuffleUsed += 1;
     if (onUseBooster) onUseBooster('shuffle');
-    setGrid(shuffleBoard(grid));
+
+    const shuffled = shuffleBoard(grid);
+    setGrid(shuffled);
     tapHaptic();
+
+    // BULGU 5: eskiden burada SADECE setGrid vardi. shuffleBoard %95 ihtimalle
+    // patlamamis hazir eslesme birakiyordu (ort. 9.5 hucre) ve hicbir sey onu
+    // temizlemiyordu -> tahtada olu eslesme kaliyor, sonraki her takas
+    // "gecerli" sayiliyordu. Artik karistirma da cascade'den geciyor.
+    frenzyFiredRef.current = false;
+    (async () => {
+      setBusy(true);
+      await delay(CASCADE_FALL_MS);
+      await processCascade(shuffled, 0);
+    })();
   }
 
   function handleHammer() {

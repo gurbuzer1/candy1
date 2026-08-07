@@ -5,11 +5,48 @@ export const LIFE_REGEN_MS = 20 * 60 * 1000; // 20 min per life
 export const STARTER_COINS = 50;
 
 // Stimulant mechanics — keep the board feeling alive between user moves.
-// On a 9x9 board with 6 colors the expected per-color count is ~13.5, so the
-// threshold must sit above that average; otherwise frenzy triggers on dice
-// alone right after a refill. 14 means "this color built up well past random".
+//
+// ⚠️ ESKI (KIRIK) MEKANIK — sabit silinmedi, artik TETIKLEYICI DEGIL.
+// FRENZY_THRESHOLD tahtadaki en kalabalik rengin hucre sayisina bakiyordu.
+// 9x9 = 81 hucre / 6 renk -> guvercin yuvasi geregi en kalabalik renk HER ZAMAN
+// >= ceil(81/6) = 14. Olculdu: 2000 tahtanin 2000'inde (%100) esik asiliyordu,
+// ortalama en kalabalik renk 17.8. Yani frenzy her hamlede tetikleniyordu ve
+// 300 otomatik oyunun 300'u 3 YILDIZ bitiyordu. Esigi buyutmek tek basina
+// cozum degildi: DOLU bir tahtanin renk sayimi oyuncunun becerisini olcmez.
 export const FRENZY_THRESHOLD = 14;
+
+// YENI MEKANIK — frenzy oyuncunun BIRIKTIRDIGI seyi odullendirir.
+// Her renk icin bir "sarj" sayaci tutulur: o renkten temizlenen HER seker
+// sayaci 1 artirir. Bir renk FRENZY_CHARGE_TARGET'a ulasinca frenzy patlar ve
+// TUM sayaclar SIFIRLANIR. Boylece:
+//   - taze tahtada asla tetiklenemez (sayaclar 0'dan baslar),
+//   - tetikleyen sey zar degil oyuncunun ust uste o rengi temizlemesidir,
+//   - tetiklendikten sonra yeniden birikmesi gerekir (tekrar-tekrar patlamaz).
+// OLCULEREK secildi (qa/qa_frenzy_kalibre.mjs, 40 oyun x 30 hamle):
+// bir rengin sarji hamle basina ~1.5 birikiyor; 30 hamlede en yuksek sarj
+// medyan 43, min 29. Hedef=30 -> ilk frenzy ortalama 19.5. hamlede, 40 oyunun
+// 39'unda ulasilabiliyor. Yani UZUN seviyede ~1 kez patlar, KISA seviyede
+// (10-12 hamle) genelde hic patlamaz: kazanilan bir odul, garanti degil.
+// Karsilastirma: eski esik 2000/2000 tahtada, HER hamlede tetikliyordu.
+export const FRENZY_CHARGE_TARGET = 30;
 export const FRENZY_COIN_BONUS = 80;
+
+/**
+ * Sarj dolmus rengi doner, hicbiri dolmamissa -1.
+ * Esitlikte EN COK birikmis renk kazanir (deterministik: ilk en buyuk).
+ */
+export function frenzyReadyColor(charge) {
+  if (!charge) return -1;
+  let best = -1;
+  let bestVal = FRENZY_CHARGE_TARGET;
+  for (let t = 0; t < charge.length; t++) {
+    if (charge[t] >= bestVal) {
+      bestVal = charge[t] + 1;   // strictly greater kazanir -> ilk en buyuk sabit
+      best = t;
+    }
+  }
+  return best;
+}
 // Lucky drop chances per newly spawned candy — kept low so they read as gifts.
 export const LUCKY_STRIPED_CHANCE = 0.04;
 export const LUCKY_WRAPPED_CHANCE = 0.015;
