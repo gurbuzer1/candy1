@@ -2,10 +2,26 @@ import { LIVES_MAX, LIFE_REGEN_MS } from '../constants/economy';
 
 // Recompute available lives based on elapsed time since lastLifeRegenMs.
 // Returns { lives, lastLifeRegenMs } that should be written back into save.
+// Cihaz saati GERI alinabilir. `lastLifeRegenMs` gelecekte kalirsa elapsed
+// negatif olur, settleLives erken doner ve anchor KENDINI ONARMAZ: olculdu,
+// {lives:0, anchor: now + 30 gun} -> lives 0'da kilitli, msUntilNextLife 30 gun
+// donduruyor ve HudBar bunu "43220:00" olarak basiyor, cikis yolu yok.
+// Kural: anchor asla `now`u ASAMAZ. Boylece en kotu bekleme LIFE_REGEN_MS'tir.
+function normalizeAnchor(value, now) {
+  if (!Number.isFinite(value) || value <= 0) return now;
+  return Math.min(value, now);
+}
+
+function normalizeLives(value) {
+  if (!Number.isFinite(value)) return LIVES_MAX;
+  return Math.min(LIVES_MAX, Math.max(0, Math.trunc(value)));
+}
+
 export function settleLives(save, now = Date.now()) {
   let { lives, lastLifeRegenMs } = save;
   if (lives == null) lives = LIVES_MAX;
-  if (!lastLifeRegenMs) lastLifeRegenMs = now;
+  lives = normalizeLives(lives);
+  lastLifeRegenMs = normalizeAnchor(lastLifeRegenMs, now);
 
   if (lives >= LIVES_MAX) {
     // Cap reached — keep regen anchor at now so the timer doesn't drift.
@@ -29,10 +45,12 @@ export function settleLives(save, now = Date.now()) {
 
 // Returns ms until the next life regen, or 0 if lives are full.
 export function msUntilNextLife(save, now = Date.now()) {
-  if ((save.lives ?? LIVES_MAX) >= LIVES_MAX) return 0;
-  const last = save.lastLifeRegenMs || now;
+  if (normalizeLives(save.lives ?? LIVES_MAX) >= LIVES_MAX) return 0;
+  // Anchor gelecekteyse kirpilir: geri sayim hicbir zaman LIFE_REGEN_MS'i
+  // (20:00) asamaz, "43220:00" gibi bir sayac artik imkansiz.
+  const last = normalizeAnchor(save.lastLifeRegenMs, now);
   const elapsed = now - last;
-  return Math.max(0, LIFE_REGEN_MS - elapsed);
+  return Math.min(LIFE_REGEN_MS, Math.max(0, LIFE_REGEN_MS - elapsed));
 }
 
 export function formatMsClock(ms) {

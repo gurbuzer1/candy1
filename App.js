@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import HomeScreen from './src/screens/HomeScreen';
 import LevelSelectScreen from './src/screens/LevelSelectScreen';
@@ -13,6 +13,7 @@ import AchievementsModal from './src/components/AchievementsModal';
 import AchievementToast from './src/components/AchievementToast';
 import {
   loadProgress, saveProgress, localDateStr, daysBetween,
+  evaluateDailyLogin, needsQuestRefresh,
 } from './src/utils/storage';
 import { settleLives, takeLife } from './src/utils/lives';
 import { ensureDailyQuests, applyQuestEvents } from './src/utils/quests';
@@ -40,9 +41,40 @@ export default function App() {
 
   // Tick to refresh life regen display every minute (UI only).
   const [, setMinuteTick] = useState(0);
+
+  // ------------------------------------------------------------------
+  // GECE YARISI DEVRI
+  //
+  // Eskiden gunluk gorev yenilemesi ve gunluk giris karari SADECE mount
+  // aninda (deps `[]`) calisiyordu ve depoda AppState dinleyicisi HIC YOKTU.
+  // Mobil uygulama gunlerce bellekte kalir: arka plandan donen oyuncu dunun
+  // gorevlerini (cogu `claimed: true`) gormeye devam ediyor ve gunluk giris
+  // odulunu HIC goremiyordu -- DailyQuestsModal ekranda "Reset at midnight"
+  // yazarken.
+  //
+  // Cozum: gun dizesi bir STATE. Dakikalik tik ve AppState 'active' olayi onu
+  // tazeler; degistiginde asagidaki tek devir efekti calisir. Soguk acilis ile
+  // gece yarisi devri ARTIK AYNI KOD YOLU.
+  // ------------------------------------------------------------------
+  const [dayStr, setDayStr] = useState(() => localDateStr());
+  const rolledDayRef = useRef(null);
+
   useEffect(() => {
-    const t = setInterval(() => setMinuteTick((n) => n + 1), 60_000);
-    return () => clearInterval(t);
+    const refresh = () => {
+      setMinuteTick((n) => n + 1);
+      setDayStr((d) => {
+        const today = localDateStr();
+        return today === d ? d : today;
+      });
+    };
+    const t = setInterval(refresh, 60_000);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    return () => {
+      clearInterval(t);
+      if (sub && typeof sub.remove === 'function') sub.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -50,26 +82,29 @@ export default function App() {
       let s = await loadProgress();
       const livesUpd = settleLives(s);
       s = { ...s, ...livesUpd };
-      s = ensureDailyQuests(s);
-
-      const today = localDateStr();
-      if (s.lastLoginDateStr !== today) {
-        const daysSince = daysBetween(today, s.lastLoginDateStr);
-        let nextDay;
-        if (daysSince === 1 && s.loginDay > 0 && s.loginDay < 7) {
-          nextDay = s.loginDay + 1;
-        } else {
-          // First-ever launch, missed days, or wrap after 7
-          nextDay = 1;
-        }
-        setPendingLoginDay(nextDay);
-        setShowLogin(true);
-      }
-
       setSave(s);
       saveProgress(s);
     })();
   }, []);
+
+  // Gunluk devir: soguk acilista (save ilk geldiginde) VE her gun degisiminde.
+  useEffect(() => {
+    if (!save) return;
+    if (rolledDayRef.current === dayStr) return;
+    rolledDayRef.current = dayStr;
+
+    let next = save;
+    if (needsQuestRefresh(next, dayStr)) {
+      next = ensureDailyQuests(next);
+    }
+    if (next !== save) commit(next);
+
+    const decision = evaluateDailyLogin(next, dayStr);
+    if (decision.showModal) {
+      setPendingLoginDay(decision.nextDay);
+      setShowLogin(true);
+    }
+  }, [dayStr, save]);
 
   function commit(updater) {
     setSave((prev) => {
@@ -83,11 +118,17 @@ export default function App() {
     const day = pendingLoginDay;
     const reward = DAILY_LOGIN_REWARDS.find((r) => r.day === day);
     commit((prev) => {
+      // `lastLoginDateStr` GERIYE gitmez: cihaz saati geri alinip odul yeniden
+      // alinmaya calisildiginda evaluateDailyLogin zaten reddediyor, burada da
+      // gorulmus en yuksek gun korunuyor (iki katmanli).
+      const claimedOn = prev.lastLoginDateStr && prev.lastLoginDateStr > dayStr
+        ? prev.lastLoginDateStr
+        : dayStr;
       const next = {
         ...prev,
         coins: prev.coins + (reward?.coins || 0),
         loginDay: day,
-        lastLoginDateStr: localDateStr(),
+        lastLoginDateStr: claimedOn,
         stats: {
           ...prev.stats,
           lifetimeCoinsEarned: (prev.stats.lifetimeCoinsEarned || 0) + (reward?.coins || 0),
