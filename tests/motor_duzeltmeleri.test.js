@@ -349,6 +349,12 @@ test("EK: cekic OZEL sekere vurunca patlamasini TETIKLER (kaynak kapisi)", () =>
 });
 
 test("BULGU 1/3: GameScreen yeni motor kapilarini GERCEKTEN cagiriyor (kaynak kapisi)", () => {
+  // ⚠️ BU TEST TEK BASINA YETMEZ — asagidaki "M6" bolumune bak.
+  // Regex "metin kaynakta geciyor mu" der; "dogru veriyle, dogru SIRADA
+  // cagriliyor mu" DEMEZ. Dogrulama ajani bunu kanitladi: cagriyi
+  // `removeAndCollapse(currentGrid, matched)` yapinca urun yeniden kirildi
+  // (ozel seker tahtaya konmuyor) ama bu regex hala esletigi icin suite
+  // 92/92 yesil kaldi. Davranis olcumu artik bu dosyanin sonunda.
   const src = fs.readFileSync(path.join(KAYNAK, "screens", "GameScreen.js"), "utf8");
   assert.ok(/reserveSpecials\(/.test(src), "reserveSpecials cagrilmali");
   assert.ok(/colorBombSwap\(/.test(src), "colorBombSwap cagrilmali");
@@ -427,5 +433,242 @@ test("BULGU 2: GameScreen sarji TEMIZLENEN sekerden toplar ve tetikte SIFIRLAR (
   assert.ok(
     /detectColorFrenzy\(currentGrid,\s*frenzyChargeRef\.current\)/.test(src),
     "frenzy tespiti sarji kullanmali (tahta sayimini degil)",
+  );
+});
+
+/* ================================================================== */
+/* M6 — KABLOLAMA ARTIK DAVRANISLA OLCULUYOR                           */
+/* ================================================================== */
+/**
+ * NEDEN BU BOLUM VAR
+ * -----------------------------------------------------------------
+ * Yukaridaki "kaynak kapisi" testleri yalnizca `/reserveSpecials\(/` gibi
+ * REGEX'lerdi. Bagimsiz dogrulama ajani su mutasyonu (M6) kanitladi:
+ *
+ *     GameScreen.js  removeAndCollapse(workGrid, toRemove)
+ *                ->  removeAndCollapse(currentGrid, matched)
+ *
+ * Bu tek satir urunu YENIDEN KIRIYOR — `reserveSpecials` cagriliyor, donusu
+ * ATILIYOR, ozel seker tahtaya HIC KONMUYOR (BULGU 1'in ta kendisi) — ama
+ * regex hala esletigi icin suite 92/92 YESIL kaliyordu.
+ *
+ * BURADA OLCULEN SEY: kaynakta gecen metin degil, oyunun GERCEK AKISI.
+ *   - GameScreen mini React ile MOUNT edilir (tests/qa_akis_render.mjs),
+ *   - `createBoard` SABIT bir tahtayla degistirilir (rastgelelik yok),
+ *   - GameBoard'un `onCellTap`'ine BASILIR -> gercek `trySwap` -> gercek
+ *     `processCascade`,
+ *   - urunun KENDI cagirdigi motor fonksiyonlari sarmalanip CAGRI SIRASI ve
+ *     ARGUMANLARI kaydedilir,
+ *   - `removeAndCollapse`'in DONDURDUGU tahtada ozel seker VAR MI diye bakilir.
+ *
+ * KONTROL VAKASI: ayni kosum takimiyla yalnizca 3'LU eslesme uretilir; o
+ * durumda ozel seker OLMAMALIDIR. Boylece "her zaman ozel koy" diyen bir
+ * sahte duzeltme de kirmizi yanar.
+ *
+ * KAPSAM DISI: gercek React reconciler, animasyon suresi, dokunma jesti.
+ */
+
+// eslint-disable-next-line import/first
+const { mount, loadModule, flattenNodes } = await import("./qa_akis_render.mjs");
+
+const BE_PATH = path.join(KAYNAK, "engine", "BoardEngine.js");
+const GAME_PATH = path.join(KAYNAK, "screens", "GameScreen.js");
+/** Kosum takiminin (babel ile derlenmis) KENDI BoardEngine ornegi. */
+const BE = loadModule(BE_PATH);
+
+/**
+ * Eslesmesiz sabit tahta + tek hamlelik kurulum.
+ * `uzunluk` 4 ise takas 4'lu (=> CIZGILI ozel), 3 ise 3'lu (=> ozel YOK) uretir.
+ */
+function tekHamleKurulumu(uzunluk) {
+  for (let R = 2; R < ROWS - 1; R++) {
+    const g = [];
+    let n = 0;
+    for (let c = 0; c < COLS; c++) {
+      g[c] = [];
+      for (let r = 0; r < ROWS; r++) {
+        g[c][r] = { type: taban(c, r), special: SPECIAL.NONE, id: `k_${R}_${n++}` };
+      }
+    }
+    const tip = 0;
+    // Satir R'de tip 0'dan bir bosluk birakilmis dizi; boslugun USTUNDE tip 0.
+    const sutunlar = uzunluk === 4 ? [2, 3, 5] : [2, 3];
+    sutunlar.forEach((c) => { g[c][R] = { ...g[c][R], type: tip }; });
+    g[4][R - 1] = { ...g[4][R - 1], type: tip };
+    for (let alt = 1; alt < 6; alt++) {
+      g[4][R] = { ...g[4][R], type: alt };
+      if (findMatches(g).matched.size !== 0) continue;          // hazir eslesme OLMAMALI
+      const s = swapCells(g, 4, R - 1, 4, R);
+      const { matchGroups } = findMatches(s);
+      if (matchGroups.length !== 1) continue;
+      if (matchGroups[0].cells.length !== uzunluk) continue;
+      return { g, R };
+    }
+  }
+  throw new Error(`sabit tahta kurulumu bulunamadi (uzunluk=${uzunluk})`);
+}
+
+/**
+ * Tahtayi sabitler, bir takas oynatir, urunun cagirdigi motor fonksiyonlarini
+ * kaydeder. `Math.random` TOHUMLU; `setTimeout` hizlandirilir (>=1000 ms olan
+ * 5 sn'lik ipucu sayaci hic kosmaz).
+ */
+async function hamleOyna(tahta) {
+  const kayit = [];
+  const eskiRandom = Math.random;
+  const eskiTimeout = globalThis.setTimeout;
+  const eskiCreate = BE.createBoard;
+  const eskiRemove = BE.removeAndCollapse;
+  const eskiReserve = BE.reserveSpecials;
+
+  let s = 987654321 >>> 0;
+  Math.random = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  globalThis.setTimeout = (fn, ms) => (ms >= 1000 ? 0 : setImmediate(fn));
+  BE.createBoard = () => tahta.g.map((c) => c.map((x) => ({ ...x })));
+  BE.reserveSpecials = (...a) => {
+    const out = eskiReserve(...a);
+    kayit.push({ ad: "reserveSpecials", args: a, out });
+    return out;
+  };
+  BE.removeAndCollapse = (...a) => {
+    const out = eskiRemove(...a);
+    kayit.push({ ad: "removeAndCollapse", args: a, out });
+    return out;
+  };
+
+  try {
+    const m = mount(GAME_PATH, {
+      levelNum: 4,
+      save: { inventory: {} },
+      boosters: {},
+      onLevelEnd: () => {},
+      onNextLevel: () => {},
+      onReplay: () => {},
+      onBack: () => {},
+      onUseBooster: () => {},
+      backRequest: 0,
+    });
+    const gb = () => flattenNodes(m.tree).find((x) => x.name === "GameBoard");
+    assert.ok(gb(), "GameBoard cizilmeli");
+    gb().props.onCellTap(4, tahta.R - 1);
+    gb().props.onCellTap(4, tahta.R);
+    for (let i = 0; i < 400; i++) await new Promise((r) => setImmediate(r));
+    return { kayit, sonTahta: gb().props.grid, renders: m.renders };
+  } finally {
+    Math.random = eskiRandom;
+    globalThis.setTimeout = eskiTimeout;
+    BE.createBoard = eskiCreate;
+    BE.removeAndCollapse = eskiRemove;
+    BE.reserveSpecials = eskiReserve;
+  }
+}
+
+test("M6: 4-lu eslesen hamlede COLLAPSE CIKTISINDA ozel seker DURUR (davranis)", async () => {
+  const kur = tekHamleKurulumu(4);
+  const { kayit, sonTahta } = await hamleOyna(kur);
+
+  const sira = kayit.map((k) => k.ad);
+  assert.ok(sira.length >= 2, `motor hic cagrilmadi: ${JSON.stringify(sira)}`);
+  assert.equal(
+    sira[0],
+    "reserveSpecials",
+    `ozel seker REZERVE EDILMEDEN collapse kosmus: ${sira.join(" -> ")}`,
+  );
+  assert.equal(sira[1], "removeAndCollapse", `beklenen sira bozuk: ${sira.join(" -> ")}`);
+
+  const rez = kayit[0];
+  const col = kayit[1];
+  assert.equal(rez.out.placed.length, 1, "4-lu eslesme tam bir ozel seker rezerve etmeli");
+
+  // Ana olcum: collapse'in DONDURDUGU tahtada ozel seker var mi?
+  // (Sansli dususlerin ozel sekerleri collapse'TAN SONRA eklenir, yani bu
+  //  tahtada yoktur -> sayim gurultusuz.)
+  const ozeller = [];
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS; r++) {
+      const cell = col.out.grid[c]?.[r];
+      if (cell && cell.special !== SPECIAL.NONE) ozeller.push({ c, r, special: cell.special });
+    }
+  }
+  assert.equal(
+    ozeller.length,
+    1,
+    `collapse ciktisinda ozel seker sayisi ${ozeller.length} olmali degil 1 ` +
+    "(M6 mutasyonu: removeAndCollapse REZERVE EDILMEMIS tahtayla kosarsa 0 olur)",
+  );
+  const { col: sc, row: sr, special: ss } = rez.out.placed[0];
+  assert.deepEqual(
+    ozeller[0],
+    { c: sc, r: sr, special: ss },
+    "collapse ciktisindaki ozel, rezerve edilen ozelle AYNI hucrede olmali",
+  );
+
+  // Veri kimligi: collapse GERCEKTEN reserveSpecials'in ciktisiyla kosmali.
+  assert.equal(col.args[0], rez.out.grid, "removeAndCollapse rezerve EDILMIS tahtayla kosmali");
+  assert.equal(col.args[1], rez.out.matched, "removeAndCollapse rezerve SONRASI kumeyle kosmali");
+
+  // Ve oyuncunun gordugu tahtada da durmali.
+  assert.equal(
+    sonTahta[sc][sr].special,
+    ss,
+    "hamle bitince ozel seker hala oyuncunun tahtasinda olmali",
+  );
+});
+
+test("M6 KONTROL: 3-lu eslesen hamlede ozel seker OLUSMAZ (ozellik uydurulmuyor)", async () => {
+  const kur = tekHamleKurulumu(3);
+  const { kayit } = await hamleOyna(kur);
+
+  const rez = kayit.filter((k) => k.ad === "reserveSpecials");
+  assert.equal(rez.length, 0, "3-lu eslesmede reserveSpecials CAGRILMAMALI");
+
+  const col = kayit.find((k) => k.ad === "removeAndCollapse");
+  assert.ok(col, "collapse kosmali");
+  let ozel = 0;
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS; r++) {
+      const cell = col.out.grid[c]?.[r];
+      if (cell && cell.special !== SPECIAL.NONE) ozel++;
+    }
+  }
+  assert.equal(ozel, 0, "3-lu eslesme ozel seker DOGURMAMALI (kontrol vakasi)");
+});
+
+/* ================================================================== */
+/* M5 — FRENZY'NIN UST SINIRI                                          */
+/* ================================================================== */
+/**
+ * ONCEKI KORLUK: yalnizca ALT sinir sinaniyordu ("FRENZY_CHARGE_TARGET > 0").
+ * `FRENZY_CHARGE_TARGET`'i 999999 yapan M5 mutasyonu frenzy'yi TAMAMEN
+ * olduruyordu ve suite YESIL geciyordu — 80 coin'lik odul mekanigi olu.
+ *
+ * BU TEST IKI YONLU: frenzy'nin (a) makul bir oyunda GERCEKTEN patladigini,
+ * (b) her hamlede patlamadigini olcer. (b) eski kirikligin ta kendisiydi
+ * (2000/2000 tahtada tetikleniyordu, 300/300 oyun 3 yildizdi).
+ *
+ * Bot TOHUMLU kosar -> test deterministiktir, rastgele kirmizi yanmaz.
+ * Olculdu (5 farkli tohum, 30 oyun, seviye 1 = en KISA seviye, 20 hamle):
+ *   >=1 frenzy alan oyun 29-30/30 · ortalama frenzy/oyun 1.60-1.90 · en cok 4.
+ */
+const { orneklem } = await import("../qa/autoplay2.mjs");
+const { LEVELS: SEVIYELER } = await import("../src/constants/levels.js");
+
+test("M5: frenzy makul bir oyunda EN AZ bir kez tetiklenir (UST SINIR korumasi)", () => {
+  const N = 30;
+  const res = orneklem(0, N, 4242); // seviye 1: en KISA seviye -> en zor kosul
+  const tetikleyen = res.filter((r) => r.frenzyCount > 0).length;
+  const ortalama = res.reduce((a, b) => a + b.frenzyCount, 0) / N;
+
+  assert.ok(
+    tetikleyen >= 25,
+    `${N} oyunun yalnizca ${tetikleyen}'inde frenzy patladi (beklenen >=25). ` +
+    "FRENZY_CHARGE_TARGET cok buyuk olabilir; olculen deger 29-30/30 idi.",
+  );
+
+  // KONTROL (ters yon): esik cok kucuk/sifir olursa frenzy HER hamlede patlar.
+  assert.ok(
+    ortalama <= SEVIYELER[0].moves / 4,
+    `frenzy oyun basina ${ortalama.toFixed(2)} kez patliyor; ` +
+    `${SEVIYELER[0].moves} hamlelik seviyede bu "her hamlede" demektir (ESKI KIRIK MEKANIK)`,
   );
 });

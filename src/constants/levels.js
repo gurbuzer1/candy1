@@ -1,8 +1,35 @@
 /**
  * SEVIYE TABLOSU — 2026-08-07'de OLCUMLE yeniden kalibre edildi.
+ * (ikinci tur: 2026-08-07 aksami, "zorluk 25->26'da TERS DONUYOR" bulgusu)
  *
  * ==========================================================================
- * NEDEN DEGISTI
+ * TUR 2 — ZORLUK EGRISI TERS DONUYORDU
+ * ==========================================================================
+ * Uc bagimsiz dogrulama orneklemi ayni seyi soyledi: gecme orani 25'ten 26'ya
+ * ARTIYORDU (n=200 %53->%60, n=1000 %51->%57, n=300 %49->%58; ~2.7 sigma,
+ * gurultu degil). Ayni sicrama 10->11, 16->17, 20->21 gecislerinde de vardi.
+ *
+ * KOK NEDEN: tur 1'in tablosunda hedefler her seviyede SABIT bir miktar
+ * (+500) artiyordu, ama hamle sayisi 5 seviyede bir SICRIYORDU
+ * (20 -> 22 -> 25 -> 28 -> 32 -> 36). Hamle sicradigi seviyede skor dagilimi
+ * ~%15 yukari kayiyor, hedef ise yalnizca ~%1,5 artiyordu -> o seviye
+ * KOLAYLASIYORDU. "Hedef sayisal olarak artiyor" testi bunu goremez, cunku
+ * hedefin BUYUMESI zorlugun artmasi DEMEK DEGILDIR.
+ *
+ * TUR 2 YONTEMI (qa/skor_dagilimi.mjs + qa/hedef_kalibre2.mjs):
+ *   1. Skor dagilimi seviyenin hedeflerine DEGIL yalnizca hamle sayisina
+ *      bagli oldugu icin 6 farkli hamle degeri icin 4000'er oyun oynandi
+ *      (tohumlu RNG, SEED=20260807; toplam 24.000 oyun, ~4 dk).
+ *   2. Her seviyenin hedefi, O SEVIYENIN dagiliminda istenen gecme oranina
+ *      karsilik gelen YUZDELIK olarak turetildi. Istenen egri:
+ *        1 yildiz %97 -> %44 · 2 yildiz %60 -> %15 · 3 yildiz %25 -> %3.
+ *   3. Sonra iki kisit ZORLANDI: (a) hedefler kesin artar,
+ *      (b) OLCULEN gecme orani seviyeden seviyeye ASLA ARTMAZ.
+ *   4. Sonuc bagimsiz tohumlarla dogrulandi (qa/monotonluk_dogrula.mjs).
+ * Kalan koruma: `tests/seviye_tablosu.test.js` artik BOTU GERCEKTEN KOSTURUR.
+ *
+ * ==========================================================================
+ * NEDEN DEGISTI (TUR 1)
  * ==========================================================================
  * Asagidaki ESKI tablo hicbir zaman olculmemisti; tahminle yazilmisti. Ustelik
  * yazildigi donemde motor KIRIKTI (Color Frenzy her hamlede tetikleniyordu,
@@ -73,38 +100,77 @@
  *  15: 15 / 8000 / 16000 / 28000      30: 15 / 20000 / 40000 / 60000
  * ==========================================================================
  *
- * Satir sonundaki yorum: OLCULEN oranlar (400 otomatik oyun, acgozlu bot)
- * "1y/2y/3y" = en az 1 / 2 / 3 yildiz alan oyun yuzdesi.
+ * ==========================================================================
+ * TUR 1 TABLOSU — SILINMEDI, kayit icin burada duruyor.
+ * ⚠️ Bu tablo "hedefler artiyor" testini GECIYORDU ama zorluk egrisi hamle
+ * sicramalarinda TERS DONUYORDU (25->26, 20->21, 10->11, 16->17).
+ * (moves / target1 / target2 / target3 — satir sonu: TUR 1'de olculen oranlar)
+ * --------------------------------------------------------------------------
+ *   1: 20 / 4000 / 14000 / 21500   (1y 98% 2y 65% 3y 31%)
+ *   2: 20 / 8000 / 14500 / 22000   (1y 96% 2y 64% 3y 29%)
+ *   3: 20 / 8500 / 15500 / 22500   (1y 95% 2y 62% 3y 27%)
+ *   4: 20 / 9000 / 16000 / 23000   (1y 93% 2y 61% 3y 26%)
+ *   5: 20 / 9500 / 16500 / 23500   (1y 90% 2y 59% 3y 25%)
+ *   6: 22 / 10500 / 19000 / 27000  (1y 88% 2y 56% 3y 25%)
+ *   7: 22 / 11000 / 19500 / 27500  (1y 86% 2y 53% 3y 24%)
+ *   8: 22 / 11500 / 20000 / 28000  (1y 84% 2y 48% 3y 23%)
+ *   9: 22 / 12000 / 20500 / 28500  (1y 82% 2y 44% 3y 21%)
+ *  10: 22 / 12500 / 21000 / 29000  (1y 81% 2y 42% 3y 20%)
+ *  11: 25 / 16500 / 26000 / 31500  (1y 81% 2y 42% 3y 20%)  <- TERS DONUS
+ *  12: 25 / 17000 / 26500 / 32000  (1y 80% 2y 41% 3y 19%)
+ *  13: 25 / 17500 / 27000 / 32500  (1y 76% 2y 40% 3y 19%)
+ *  14: 25 / 18000 / 27500 / 33000  (1y 72% 2y 37% 3y 18%)
+ *  15: 25 / 18500 / 28000 / 33500  (1y 69% 2y 34% 3y 16%)
+ *  16: 28 / 22000 / 31000 / 38500  (1y 69% 2y 33% 3y 16%)
+ *  17: 28 / 22500 / 31500 / 39000  (1y 67% 2y 31% 3y 15%)
+ *  18: 28 / 23000 / 32000 / 39500  (1y 65% 2y 30% 3y 15%)
+ *  19: 28 / 23500 / 32500 / 40000  (1y 65% 2y 27% 3y 14%)
+ *  20: 28 / 24000 / 33000 / 41000  (1y 63% 2y 26% 3y 12%)
+ *  21: 32 / 28500 / 39000 / 46500  (1y 63% 2y 25% 3y 12%)  <- TERS DONUS
+ *  22: 32 / 29000 / 39500 / 47000  (1y 61% 2y 24% 3y 11%)
+ *  23: 32 / 29500 / 40000 / 47500  (1y 59% 2y 23% 3y 10%)
+ *  24: 32 / 30000 / 40500 / 48500  (1y 57% 2y 22% 3y  8%)
+ *  25: 32 / 30500 / 41000 / 49000  (1y 56% 2y 21% 3y  8%)
+ *  26: 36 / 34500 / 46000 / 55000  (1y 55% 2y 21% 3y  8%)  <- TERS DONUS
+ *  27: 36 / 35000 / 46500 / 56000  (1y 53% 2y 20% 3y  6%)
+ *  28: 36 / 35500 / 47000 / 58000  (1y 51% 2y 19% 3y  5%)
+ *  29: 36 / 36000 / 47500 / 59000  (1y 49% 2y 18% 3y  4%)
+ *  30: 36 / 36500 / 48000 / 60000  (1y 46% 2y 16% 3y  3%)
+ * ==========================================================================
+ *
+ * Satir sonundaki yorum: TUR 2'de OLCULEN oranlar (hamle basina 4000 otomatik
+ * oyun, tohumlu acgozlu bot). "1y/2y/3y" = en az 1 / 2 / 3 yildiz alan oyun
+ * yuzdesi. Bu sayilar botun oranlaridir; becerikli bir insan icin ALT SINIRDIR.
  */
 export const LEVELS = [
-  { moves: 20, target1: 4000,  target2: 14000, target3: 21500 }, // 1y 98% 2y 65% 3y 31%
-  { moves: 20, target1: 8000,  target2: 14500, target3: 22000 }, // 1y 96% 2y 64% 3y 29%
-  { moves: 20, target1: 8500,  target2: 15500, target3: 22500 }, // 1y 95% 2y 62% 3y 27%
-  { moves: 20, target1: 9000,  target2: 16000, target3: 23000 }, // 1y 93% 2y 61% 3y 26%
-  { moves: 20, target1: 9500,  target2: 16500, target3: 23500 }, // 1y 90% 2y 59% 3y 25%
-  { moves: 22, target1: 10500, target2: 19000, target3: 27000 }, // 1y 88% 2y 56% 3y 25%
-  { moves: 22, target1: 11000, target2: 19500, target3: 27500 }, // 1y 86% 2y 53% 3y 24%
-  { moves: 22, target1: 11500, target2: 20000, target3: 28000 }, // 1y 84% 2y 48% 3y 23%
-  { moves: 22, target1: 12000, target2: 20500, target3: 28500 }, // 1y 82% 2y 44% 3y 21%
-  { moves: 22, target1: 12500, target2: 21000, target3: 29000 }, // 1y 81% 2y 42% 3y 20%
-  { moves: 25, target1: 16500, target2: 26000, target3: 31500 }, // 1y 81% 2y 42% 3y 20%
-  { moves: 25, target1: 17000, target2: 26500, target3: 32000 }, // 1y 80% 2y 41% 3y 19%
-  { moves: 25, target1: 17500, target2: 27000, target3: 32500 }, // 1y 76% 2y 40% 3y 19%
-  { moves: 25, target1: 18000, target2: 27500, target3: 33000 }, // 1y 72% 2y 37% 3y 18%
-  { moves: 25, target1: 18500, target2: 28000, target3: 33500 }, // 1y 69% 2y 34% 3y 16%
-  { moves: 28, target1: 22000, target2: 31000, target3: 38500 }, // 1y 69% 2y 33% 3y 16%
-  { moves: 28, target1: 22500, target2: 31500, target3: 39000 }, // 1y 67% 2y 31% 3y 15%
-  { moves: 28, target1: 23000, target2: 32000, target3: 39500 }, // 1y 65% 2y 30% 3y 15%
-  { moves: 28, target1: 23500, target2: 32500, target3: 40000 }, // 1y 65% 2y 27% 3y 14%
-  { moves: 28, target1: 24000, target2: 33000, target3: 41000 }, // 1y 63% 2y 26% 3y 12%
-  { moves: 32, target1: 28500, target2: 39000, target3: 46500 }, // 1y 63% 2y 25% 3y 12%
-  { moves: 32, target1: 29000, target2: 39500, target3: 47000 }, // 1y 61% 2y 24% 3y 11%
-  { moves: 32, target1: 29500, target2: 40000, target3: 47500 }, // 1y 59% 2y 23% 3y 10%
-  { moves: 32, target1: 30000, target2: 40500, target3: 48500 }, // 1y 57% 2y 22% 3y  8%
-  { moves: 32, target1: 30500, target2: 41000, target3: 49000 }, // 1y 56% 2y 21% 3y  8%
-  { moves: 36, target1: 34500, target2: 46000, target3: 55000 }, // 1y 55% 2y 21% 3y  8%
-  { moves: 36, target1: 35000, target2: 46500, target3: 56000 }, // 1y 53% 2y 20% 3y  6%
-  { moves: 36, target1: 35500, target2: 47000, target3: 58000 }, // 1y 51% 2y 19% 3y  5%
-  { moves: 36, target1: 36000, target2: 47500, target3: 59000 }, // 1y 49% 2y 18% 3y  4%
-  { moves: 36, target1: 36500, target2: 48000, target3: 60000 }, // 1y 46% 2y 16% 3y  3%
+  { moves: 20, target1: 6900,  target2: 15200, target3: 22100 }, // 1y 97% 2y 60% 3y 25%
+  { moves: 20, target1: 8200,  target2: 15800, target3: 22200 }, // 1y 95% 2y 58% 3y 24%
+  { moves: 20, target1: 8700,  target2: 16200, target3: 22500 }, // 1y 93% 2y 57% 3y 23%
+  { moves: 20, target1: 9000,  target2: 16600, target3: 22700 }, // 1y 91% 2y 55% 3y 23%
+  { moves: 20, target1: 9400,  target2: 16900, target3: 22900 }, // 1y 89% 2y 54% 3y 22%
+  { moves: 22, target1: 10800, target2: 19200, target3: 27700 }, // 1y 86% 2y 50% 3y 19%
+  { moves: 22, target1: 10900, target2: 19300, target3: 27800 }, // 1y 85% 2y 49% 3y 18%
+  { moves: 22, target1: 11200, target2: 19400, target3: 27900 }, // 1y 84% 2y 49% 3y 18%
+  { moves: 22, target1: 11600, target2: 19600, target3: 28000 }, // 1y 82% 2y 47% 3y 18%
+  { moves: 22, target1: 12000, target2: 19800, target3: 28100 }, // 1y 80% 2y 46% 3y 18%
+  { moves: 25, target1: 17300, target2: 24700, target3: 33500 }, // 1y 77% 2y 42% 3y 15%
+  { moves: 25, target1: 17400, target2: 24800, target3: 33600 }, // 1y 77% 2y 42% 3y 14%
+  { moves: 25, target1: 17700, target2: 25100, target3: 33700 }, // 1y 75% 2y 41% 3y 14%
+  { moves: 25, target1: 18100, target2: 25500, target3: 33800 }, // 1y 73% 2y 40% 3y 14%
+  { moves: 25, target1: 18400, target2: 26000, target3: 33900 }, // 1y 71% 2y 38% 3y 14%
+  { moves: 28, target1: 22000, target2: 29700, target3: 40400 }, // 1y 67% 2y 35% 3y 11%
+  { moves: 28, target1: 22100, target2: 29800, target3: 40500 }, // 1y 67% 2y 35% 3y 11%
+  { moves: 28, target1: 22500, target2: 30100, target3: 40600 }, // 1y 66% 2y 34% 3y 10%
+  { moves: 28, target1: 23200, target2: 30500, target3: 40700 }, // 1y 64% 2y 32% 3y 10%
+  { moves: 28, target1: 23700, target2: 31000, target3: 40800 }, // 1y 62% 2y 30% 3y 10%
+  { moves: 32, target1: 28800, target2: 38000, target3: 49000 }, // 1y 59% 2y 27% 3y  7%
+  { moves: 32, target1: 29000, target2: 38100, target3: 49100 }, // 1y 58% 2y 27% 3y  7%
+  { moves: 32, target1: 29400, target2: 38400, target3: 49200 }, // 1y 57% 2y 26% 3y  7%
+  { moves: 32, target1: 29800, target2: 39000, target3: 49300 }, // 1y 55% 2y 24% 3y  7%
+  { moves: 32, target1: 30200, target2: 39500, target3: 49400 }, // 1y 53% 2y 22% 3y  7%
+  { moves: 36, target1: 36100, target2: 46700, target3: 60000 }, // 1y 50% 2y 19% 3y  4%
+  { moves: 36, target1: 36300, target2: 46800, target3: 60200 }, // 1y 49% 2y 19% 3y  4%
+  { moves: 36, target1: 36800, target2: 47200, target3: 60300 }, // 1y 47% 2y 18% 3y  4%
+  { moves: 36, target1: 37200, target2: 48000, target3: 60400 }, // 1y 46% 2y 16% 3y  3%
+  { moves: 36, target1: 37800, target2: 48800, target3: 61300 }, // 1y 44% 2y 15% 3y  3%
 ];

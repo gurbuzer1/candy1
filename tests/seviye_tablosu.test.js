@@ -1,9 +1,18 @@
 /**
  * SEVIYE TABLOSU SINAVI — kalibre edilmis egriyi KORUR.
  *
- * Bu testler zorlugu OLCMEZ (olcum qa/kalibrasyon.mjs'in isi, 400-2000 oyun
- * surer ve rastgeledir; birim testine girmez). Burada korunan sey, olcumden
- * cikan tablonun YAPISAL ozellikleri:
+ * ⚠️ 2026-08-07: BU DOSYA ESKIDEN BOTU HIC KOSTURMUYORDU.
+ * Yalnizca sayilarin YAPISINI denetliyordu ("hedefler artiyor mu", "t1<t2<t3
+ * mu"). Bu yuzden gercek zorluk hatasini ASLA yakalayamadi: uc bagimsiz
+ * orneklem seviye 25'ten 26'ya gecme oraninin ARTTIGINI olctu
+ * (n=200 %53->%60, n=1000 %51->%57, n=300 %49->%58; ~2.7 sigma). Ayni sicrama
+ * 10->11, 15->16, 20->21 gecislerinde de vardi. Hepsi HAMLE SINIRIYDI: hedef
+ * +%1,5 artarken hamle +%12 artiyordu, yani "hedef buyudu" ile "seviye
+ * zorlasti" AYNI SEY DEGILDIR.
+ * Dosyanin sonuna BOTU GERCEKTEN KOSTURAN bir test eklendi.
+ *
+ * Buradaki yapisal testler zorlugu OLCMEZ; korunan sey olcumden cikan tablonun
+ * YAPISAL ozellikleri:
  *
  *   - hamle limiti pozitif ve makul,
  *   - target1 < target2 < target3 (yildizlar birbirini gecmiyor),
@@ -98,4 +107,85 @@ test("computeStars tabloyla tutarli: her esikte dogru yildiz", () => {
     assert.equal(computeStars(lv.target3 - 1, lv), 2, `sev ${i + 1}`);
     assert.equal(computeStars(lv.target3, lv), 3, `sev ${i + 1}`);
   });
+});
+
+/* ================================================================== */
+/* ZORLUK EGRISI — BOT GERCEKTEN KOSUYOR                               */
+/* ================================================================== */
+/**
+ * NE OLCULUYOR: motora sadik bassiz oyuncu (qa/autoplay2.mjs) her seviyeyi
+ * sonuna kadar oynar; her seviye icin OLCULEN gecme orani cikarilir ve oranin
+ * seviyeden seviyeye ARTMADIGI dogrulanir. Yukaridaki yapisal testler bunu
+ * goremez — hedefin sayisal olarak buyumesi zorlugun artmasi DEMEK DEGILDIR.
+ *
+ * ⚠️ RASTGELE KIRMIZI YANAN TEST TESTSIZLIKTEN BETERDIR. Uc onlem alindi:
+ *
+ * 1) TOHUMLU RNG. Ayni (n, seed) ikilisi ayni sayilari verir; test
+ *    deterministiktir, "bazen kirmizi" olmaz.
+ *
+ * 2) ESLESTIRILMIS ORNEKLEME. Skor dagilimi seviyenin HEDEFLERINE degil
+ *    yalnizca hamle sayisina bagli oldugu icin, ayni hamle sayisini paylasan
+ *    5'er seviye AYNI ornekten okunur -> 25 grup-ici gecisde gurultu SIFIR.
+ *    Kalan 5 hamle-siniri gecisinde de ortak rastgele sayilar kullanilir
+ *    ("36 hamlelik i. oyun" = "32 hamlelik i. oyun"un devami), bu da farkin
+ *    varyansini ciddi olcude dusurur.
+ *
+ * 3) TOLERANS BILINEN-KOTU VAKAYLA KALIBRE EDILDI (qa/eski_tablo_kiyas.mjs).
+ *    Ayni olcum, ayni 10 tohum, tek fark tablo — n=300'de:
+ *      YENI tablo   : en buyuk ters donus +1,7 puan (10 tohumun en kotusu)
+ *      TUR 1 tablosu: en buyuk ters donus +4,3 ... +9,3 puan
+ *    Yani %3'luk tolerans ikisinin TAM ARASINA dusuyor: bugun yesil, hatanin
+ *    geri gelmesi halinde kirmizi. Kullanilan tohum (20260808) kalibrasyonda
+ *    KULLANILMADI (kalibrasyon tohumu 20260807) — tablo kendi olcum tohumuna
+ *    uydurulmus olmasin diye.
+ *
+ * SURE: ~20 sn (6 x 300 = 1800 tam oyun). Suite'in geri kalani ~3 sn.
+ * KAPSAM DISI: insan oyuncu (bot "acgozlu", insan ~1,5 kat iyi), UI, animasyon.
+ */
+const { olcumTablosu, tersDonusler } = await import("../qa/monotonluk_dogrula.mjs");
+
+test("ZORLUK EGRISI: bot kosturuluyor, gecme orani seviyeden seviyeye ARTMIYOR", () => {
+  const N = 300;
+  const TOHUM = 20260808;   // kalibrasyon tohumu DEGIL (o 20260807)
+  const TOLERANS = 0.03;    // qa/eski_tablo_kiyas.mjs ile kalibre edildi
+
+  const { oranlar, hamleler } = olcumTablosu(N, TOHUM);
+  const ters = tersDonusler(oranlar, hamleler).filter((t) => t.fark > TOLERANS);
+
+  assert.deepEqual(
+    ters.map((t) => `${t.alan} sev ${t.sev - 1}->${t.sev}: ` +
+      `${(t.onceki * 100).toFixed(1)}% -> ${(t.simdi * 100).toFixed(1)}%` +
+      `${t.hamleSiniri ? " [HAMLE SINIRI]" : ""}`),
+    [],
+    "zorluk egrisi TERS DONUYOR: bu seviyelerde bir sonraki seviye daha KOLAY",
+  );
+
+  // -------- KONTROL VAKALARI (ters yon) --------
+  // Bunlar olmadan "ozelligi tamamen oldurmek" de yesil gecerdi: butun
+  // hedefleri 999999 yapmak gecme oranini her seviyede %0 yapar ve %0 egrisi
+  // kusursuz "monoton"dur. Asagidakiler egrinin GERCEKTEN oynanabilir bir
+  // bantta oldugunu ve GERCEKTEN indigini olcer.
+  const t1 = oranlar.t1;
+  const t3 = oranlar.t3;
+  assert.ok(
+    t1[0] >= 0.85,
+    `seviye 1 bir yildiz orani ${(t1[0] * 100).toFixed(0)}% — ilk seviye ACIK ARA gecilebilir olmali`,
+  );
+  assert.ok(
+    t1[29] >= 0.20,
+    `seviye 30 bir yildiz orani ${(t1[29] * 100).toFixed(0)}% — son seviye duvar olmamali`,
+  );
+  assert.ok(
+    t1[29] <= 0.65,
+    `seviye 30 bir yildiz orani ${(t1[29] * 100).toFixed(0)}% — son seviye bedava olmamali`,
+  );
+  assert.ok(
+    t1[0] - t1[29] >= 0.30,
+    `egri inmiyor: sev1 ${(t1[0] * 100).toFixed(0)}% -> sev30 ${(t1[29] * 100).toFixed(0)}% ` +
+    "(duz bir egri de 'monoton' sayilir, ama zorluk artmiyor demektir)",
+  );
+  assert.ok(
+    t3[29] > 0,
+    "seviye 30'da UCUNCU YILDIZ imkansiz — eski tablonun 19-30 arasindaki hatasi buydu",
+  );
 });

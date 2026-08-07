@@ -1,7 +1,8 @@
 /**
  * autoplay2 — DUZELTILMIS GameScreen.js akisini BIREBIR taklit eden bassiz oyuncu.
- * qa/autoplay.mjs SILINMEDI; o ESKI akisi (placeSpecials collapse'tan sonra,
- * tahta-sayimli frenzy, takas-aktivasyonsuz bomba) olcmeye devam ediyor.
+ * qa/autoplay.mjs SILINMEDI ama ARTIK BOZUK BIR OLCUM ARACIDIR (kendi basindaki
+ * uyari blokuna bak): eski frenzy tetikleyicisini ve olu placeSpecials'i tasir,
+ * 30 seviyenin hepsinde %100, NOFRENZY=1 ile %0 uretir. HICBIR yonde kullanma.
  *
  * Fark listesi (hepsi kaynaktan okunuyor, sabit kopyalanmiyor):
  *   - reserveSpecials  : ozel seker collapse'TAN ONCE yerine yaziliyor
@@ -11,18 +12,50 @@
  *
  * Kullanim: node qa/autoplay2.mjs <oyun_sayisi> <seviyeler>
  *   ENV: NOFRENZY=1 frenzy'yi kapatir, NOBOMB=1 bomba takasini kapatir.
+ *        SEED=<sayi> tohumlu (TEKRAR EDILEBILIR) rastgelelik.
+ *
+ * ==========================================================================
+ * 2026-08-07 — KUTUPHANE OLARAK DA KULLANILIR
+ * ==========================================================================
+ * `tests/seviye_tablosu.test.js` botu GERCEKTEN kosturur (zorluk egrisinin ters
+ * donmesi eskiden suite'ten kaciyordu). Bunun icin:
+ *   - import yollari MUTLAK `file:///C:/...` yerine GORELI hale getirildi
+ *     (depo baska bir yola klonlanirsa arac sessizce olmesin diye),
+ *   - `playLevel` / `orneklem` / `orneklemHamle` DISA ACILDI,
+ *   - `SEED` ile TOHUMLANABILIR RNG eklendi: ayni tohum ayni sonucu verir,
+ *     boylece bot kosturan test RASTGELE KIRMIZI YANMAZ.
+ * CLI davranisi degismedi (tohum verilmezse gercek Math.random).
  */
 import {
   createBoard, swapCells, findMatches, determineSpecials,
   getSpecialRemovals, removeAndCollapse, reserveSpecials,
   colorBombSwap, calculateScore, hasValidMoves, shuffleBoard,
-} from 'file:///C:/Users/PC/Projects/claude-mobile-terminal-5/workspace/gurbuzer1_candy1/src/engine/BoardEngine.js';
-import { COLS, ROWS, SPECIAL } from 'file:///C:/Users/PC/Projects/claude-mobile-terminal-5/workspace/gurbuzer1_candy1/src/constants/kural.js';
-import { LEVELS } from 'file:///C:/Users/PC/Projects/claude-mobile-terminal-5/workspace/gurbuzer1_candy1/src/constants/levels.js';
+} from '../src/engine/BoardEngine.js';
+import { COLS, ROWS, SPECIAL } from '../src/constants/kural.js';
+import { LEVELS } from '../src/constants/levels.js';
 import {
   LUCKY_STRIPED_CHANCE, LUCKY_WRAPPED_CHANCE, CHAIN_BONUS_THRESHOLD,
   FRENZY_CHARGE_TARGET, frenzyReadyColor,
-} from 'file:///C:/Users/PC/Projects/claude-mobile-terminal-5/workspace/gurbuzer1_candy1/src/constants/economy.js';
+} from '../src/constants/economy.js';
+
+/** mulberry32 — kucuk, hizli, TEKRAR EDILEBILIR. */
+export function tohumluRng(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** `fn`'i tohumlu Math.random ile kosturur ve ESKISINI GERI KOYAR. */
+export function tohumlaKostur(seed, fn) {
+  if (seed === undefined || seed === null || seed === '') return fn();
+  const eski = Math.random;
+  Math.random = tohumluRng(Number(seed));
+  try { return fn(); } finally { Math.random = eski; }
+}
 
 // GameScreen.detectColorFrenzy birebir
 function detectColorFrenzy(grid, charge) {
@@ -53,13 +86,19 @@ function applyLuckyDrops(grid, fallMap) {
 
 const countSpecials = (g) => { let k = 0; for (let c = 0; c < COLS; c++) for (let r = 0; r < ROWS; r++) if (g[c][r] && g[c][r].special !== SPECIAL.NONE) k++; return k; };
 
-function playLevel(levelIdx) {
+/**
+ * Tek bir seviyeyi sonuna kadar oynar.
+ * @param levelIdx     LEVELS icindeki sifir tabanli indeks
+ * @param movesOverride hamle sayisini ZORLAR (skor dagilimi yalnizca hamle
+ *                      sayisina bagli oldugu icin kalibrasyon bunu kullanir)
+ */
+export function playLevel(levelIdx, movesOverride) {
   const lv = LEVELS[levelIdx];
   let grid = createBoard();
   let safety = 0;
   while (findMatches(grid).matched.size > 0 && safety < 100) { grid = createBoard(); safety++; }
 
-  let score = 0, moves = lv.moves, chainStreak = 0;
+  let score = 0, moves = movesOverride == null ? lv.moves : movesOverride, chainStreak = 0;
   let frenzyFired = false;
   let charge = [0, 0, 0, 0, 0, 0];
   let specialsPlaced = 0, frenzyCount = 0, maxCascade = 0, bombSwaps = 0, dirtyBoards = 0;
@@ -185,23 +224,68 @@ function playLevel(levelIdx) {
   return { score, specialsPlaced, frenzyCount, maxCascade, bombSwaps, dirtyBoards, endSpecials: countSpecials(grid) };
 }
 
-const RUNS = Number(process.argv[2] || 30);
-const which = process.argv[3] ? process.argv[3].split(',').map(Number) : [1, 2, 5, 10, 15, 20, 25, 30];
-console.log('FRENZY_CHARGE_TARGET =', FRENZY_CHARGE_TARGET);
-console.log('sev | hml | t1 / t2 / t3 | ort.skor | min-max | %>=t1 | %>=t2 | %>=t3 | frenzy/oyun | eslesmeden konan ozel/oyun | bombaTakas/oyun | kirli tahta');
-for (const num of which) {
-  const idx = num - 1;
-  const lv = LEVELS[idx];
-  const res = [];
-  for (let i = 0; i < RUNS; i++) res.push(playLevel(idx));
-  const sc = res.map(r => r.score).sort((a, b) => a - b);
-  const avg = sc.reduce((a, b) => a + b, 0) / sc.length;
-  const pct = (t) => (100 * sc.filter(s => s >= t).length / sc.length).toFixed(0);
-  const mean = (k) => (res.reduce((a, b) => a + b[k], 0) / RUNS).toFixed(1);
-  console.log('%s | %s | %s / %s / %s | %s | %s-%s | %s%% | %s%% | %s%% | %s | %s | %s | %d',
-    String(num).padStart(2), String(lv.moves).padStart(3), lv.target1, lv.target2, lv.target3,
-    String(Math.round(avg)).padStart(7), sc[0], sc[sc.length - 1],
-    pct(lv.target1).padStart(3), pct(lv.target2).padStart(3), pct(lv.target3).padStart(3),
-    mean('frenzyCount'), mean('specialsPlaced'), mean('bombSwaps'),
-    res.reduce((a, b) => a + b.dirtyBoards, 0));
+/** Bir seviyeden `n` oyunluk orneklem (tohumlu -> TEKRAR EDILEBILIR). */
+export function orneklem(levelIdx, n, seed) {
+  return tohumlaKostur(seed, () => {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(playLevel(levelIdx));
+    return out;
+  });
+}
+
+/** Oyun basina tohum: (taban, indeks) -> 32 bit. */
+export function oyunTohumu(taban, i) {
+  return (Math.imul(Number(taban) | 0, 2654435761) + Math.imul(i | 0, 40503)) >>> 0;
+}
+
+/**
+ * Skor dagilimi YALNIZCA hamle sayisina baglidir (hedefler oyunu etkilemez),
+ * bu yuzden kalibrasyon 30 seviye yerine 6 farkli hamle degerini ornekler.
+ *
+ * ⚠️ ORTAK RASTGELE SAYILAR (variance reduction): her oyun KENDI tohumuyla
+ * baslar, tohum yalnizca (taban, oyun indeksi)'ne baglidir — hamle sayisina
+ * DEGIL. Boylece "36 hamlelik i. oyun", "32 hamlelik i. oyun"un AYNI tahtada,
+ * AYNI zar dizisiyle 4 hamle daha devam ettirilmis halidir. Iki hamle degeri
+ * arasindaki gecme orani farki artik ESLESTIRILMIS bir karsilastirmadir ve
+ * varyansi bagimsiz orneklemeye gore cok daha dusuktur. Hamle SINIRI gecisleri
+ * (10->11, 15->16, 20->21, 25->26) tam olarak burada olculuyor; olcum
+ * gurultusu orada en buyuktu (bagimsiz orneklemeyle n=250'de +8 puana kadar).
+ */
+export function orneklemHamle(moves, n, seed) {
+  if (seed === undefined || seed === null || seed === '') {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(playLevel(0, moves).score);
+    return out;
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(tohumlaKostur(oyunTohumu(seed, i), () => playLevel(0, moves).score));
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------------
+// CLI (yalnizca dogrudan calistirilinca; import edilince SESSIZ kalir)
+// --------------------------------------------------------------------------
+const dogrudan = process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('qa/autoplay2.mjs');
+if (dogrudan) {
+  const RUNS = Number(process.argv[2] || 30);
+  const which = process.argv[3] ? process.argv[3].split(',').map(Number) : [1, 2, 5, 10, 15, 20, 25, 30];
+  console.log('FRENZY_CHARGE_TARGET =', FRENZY_CHARGE_TARGET, '| SEED =', process.env.SEED || '(tohumsuz)');
+  console.log('sev | hml | t1 / t2 / t3 | ort.skor | min-max | %>=t1 | %>=t2 | %>=t3 | frenzy/oyun | eslesmeden konan ozel/oyun | bombaTakas/oyun | kirli tahta');
+  for (const num of which) {
+    const idx = num - 1;
+    const lv = LEVELS[idx];
+    const res = orneklem(idx, RUNS, process.env.SEED);
+    const sc = res.map((r) => r.score).sort((a, b) => a - b);
+    const avg = sc.reduce((a, b) => a + b, 0) / sc.length;
+    const pct = (t) => (100 * sc.filter((s) => s >= t).length / sc.length).toFixed(0);
+    const mean = (k) => (res.reduce((a, b) => a + b[k], 0) / RUNS).toFixed(1);
+    console.log('%s | %s | %s / %s / %s | %s | %s-%s | %s%% | %s%% | %s%% | %s | %s | %s | %d',
+      String(num).padStart(2), String(lv.moves).padStart(3), lv.target1, lv.target2, lv.target3,
+      String(Math.round(avg)).padStart(7), sc[0], sc[sc.length - 1],
+      pct(lv.target1).padStart(3), pct(lv.target2).padStart(3), pct(lv.target3).padStart(3),
+      mean('frenzyCount'), mean('specialsPlaced'), mean('bombSwaps'),
+      res.reduce((a, b) => a + b.dirtyBoards, 0));
+  }
 }

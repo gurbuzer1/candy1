@@ -17,7 +17,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -41,14 +41,91 @@ function kaynakDosyalari() {
   return bulunan;
 }
 
+/**
+ * TARAMA KAPSAMI CITASI — 2026-08-07'de OLCUMLE sikilastirildi.
+ *
+ * ESKI CITA: `dosyalar.length >= 25`. Gercek sayi 31'di, yani ALTI dosya
+ * silinse (ya da tarama yolu bozulup alti dosya gorunmez olsa) test YINE YESIL
+ * kaliyordu — "yesil suite, olu app" tuzagi tam olarak buradan geri sizabilir.
+ *
+ * YENI CITA — dosya LISTESI sabitlendi, sayi degil:
+ *   - bir dosya KAYBOLURSA kirmizi (aranan sey adiyla raporlanir),
+ *   - YENI dosya eklenince kirmizi YANMAZ (liste "en az bunlar" demektir),
+ *     boylece cita kirilgan olmaz ve her yeni bilesende guncelleme istemez.
+ * Yeni dosyalar yine de derlenir; sadece listede olmalari sart degildir.
+ *
+ * ⚠️ Bir dosya BILEREK silinirse bu listeden de cikarilmalidir — testin isi
+ * "kaza eseri kaybolmayi" yakalamak, kasitli silmeyi engellemek degil.
+ */
+const BEKLENEN_DOSYALAR = [
+  "App.js",
+  "src/components/AchievementToast.js",
+  "src/components/AchievementsModal.js",
+  "src/components/AnimatedBackground.js",
+  "src/components/BoosterShopModal.js",
+  "src/components/CandyCell.js",
+  "src/components/ColorFrenzyOverlay.js",
+  "src/components/DailyLoginModal.js",
+  "src/components/DailyQuestsModal.js",
+  "src/components/GameBoard.js",
+  "src/components/HudBar.js",
+  "src/components/LevelIntroOverlay.js",
+  "src/components/ParticleBurst.js",
+  "src/components/PreGameBoosterModal.js",
+  "src/components/ProgressBar.js",
+  "src/components/ScorePopup.js",
+  "src/components/SpecialActivationFX.js",
+  "src/constants/economy.js",
+  "src/constants/game.js",
+  "src/constants/kural.js",
+  "src/constants/levels.js",
+  "src/engine/BoardEngine.js",
+  "src/screens/GameScreen.js",
+  "src/screens/HomeScreen.js",
+  "src/screens/HowToPlayModal.js",
+  "src/screens/LevelSelectScreen.js",
+  "src/utils/achievements.js",
+  "src/utils/haptics.js",
+  "src/utils/lives.js",
+  "src/utils/quests.js",
+  "src/utils/storage.js",
+];
+
+/** Mutlak yolu depo-koku goreli, ileri-bolu bicime cevirir. */
+function goreli(yol) {
+  return yol.slice(KOK.length + 1).split(sep).join("/");
+}
+
+test("taramanin GORDUGU dosya kumesi: bilinen HICBIR kaynak dosya kaybolmadi", () => {
+  // ONCE: cita `>=25` idi, gercek sayi 31 -> alti dosya sessizce kaybolabilirdi.
+  const bulunan = new Set(kaynakDosyalari().map(goreli));
+  const kayip = BEKLENEN_DOSYALAR.filter((d) => !bulunan.has(d));
+  assert.deepEqual(
+    kayip,
+    [],
+    `taramada GORUNMEYEN kaynak dosya(lar) var — ya silindi ya tarama yolu bozuldu:\n  ${kayip.join("\n  ")}`,
+  );
+
+  // Kontrol vakasi: liste tarafinin da canli oldugunu goster (tarama hic dosya
+  // bulamasa yukaridaki assert zaten patlar, ama bu satir "liste bos kalmis"
+  // sessiz halini de kapatir).
+  assert.ok(BEKLENEN_DOSYALAR.length >= 31, "beklenen dosya listesi budanmis");
+
+  // Yeni dosya eklemek KIRMIZI YANMAZ; sadece bilgi olarak raporlanir.
+  const yeni = [...bulunan].filter((d) => !BEKLENEN_DOSYALAR.includes(d));
+  if (yeni.length > 0) {
+    console.log(`  (bilgi) listede olmayan yeni kaynak dosya: ${yeni.join(", ")}`);
+  }
+});
+
 test("her kaynak dosya Metro'nun transform'uyla DERLENIR", () => {
   const babel = require("@babel/core");
   const dosyalar = kaynakDosyalari();
 
-  assert.ok(
-    dosyalar.length >= 25,
-    `beklenen >=25 kaynak dosya, bulunan ${dosyalar.length} — tarama yolu bozulmus olabilir`,
-  );
+  // Cita artik "sayi >= 25" degil; her BEKLENEN dosya derlenmis olmali.
+  const bulunan = new Set(dosyalar.map(goreli));
+  const kayip = BEKLENEN_DOSYALAR.filter((d) => !bulunan.has(d));
+  assert.deepEqual(kayip, [], `derleme listesinde eksik dosya: ${kayip.join(", ")}`);
 
   const hatalar = [];
   for (const yol of dosyalar) {
