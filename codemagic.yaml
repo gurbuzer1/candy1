@@ -1,0 +1,228 @@
+# Sugar Blast — Mac'siz iOS build + TestFlight (Codemagic)
+#
+# NEDEN CODEMAGIC, EAS DEGIL: Expo hesabi Starter planinda ve $45 build
+# kredisini $48 ASMIS durumda (29 Agu faturasi $67, iOS build'i ~$2).
+# Codemagic'te abonelik yok, 500 ucretsiz macOS dakikasi var -> ayni is $0.
+#
+# BU DEPODA ONCEDEN HIC BUILD HATTI YOKTU. Depo bitmis bir Expo oyunu
+# tasiyor (App.js, ikon+splash, tests/ altinda 4 test dosyasi, qa/ dogrulama
+# betikleri) ama eas.json / ios/ / codemagic.yaml hicbiri yazilmamisti.
+# PARA.md karari: "sonsuza dek ucretsiz" -- odeme yolu YOK, bu bilincli.
+#
+# IMZALAMA: sertifika YARATILMIYOR (Apple her tipte 3 ile sinirli, ikisi de
+# dolu). Codemagic'te kayitli caniai-distribution (= ASC 4BJUH654XC) ve ona
+# bagli olarak yaratilan `sugarblast-appstore` profili kullaniliyor.
+# Ayni desenle CanIAI v23, ScoreLens v1, DecideForUs v42, TidySell v16
+# 2026-08-18'de TestFlight'a dustu.
+#
+# ⛔ TEK KALAN ENGEL BU DOSYADA DEGIL: App Store Connect'te app kaydi yok ve
+#    API `apps does not allow CREATE` (403) donuyor -> panelden acilmali.
+#    Kayit acildiktan sonra bu workflow oldugu gibi kosar.
+#
+# Expo projesi depo KOKUNDE (letters-and-digits'ten farki bu).
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: CodemagicASCKey
+    environment:
+      ios_signing:
+        provisioning_profiles:
+          - sugarblast-appstore
+        certificates:
+          - caniai-distribution
+      # Capacitor/Expo CLI'lari Node >=22 istiyor; ScoreLens build #1 tam
+      # burada "requires NodeJS >=22.0.0" ile 50 saniyede patlamisti.
+      node: 22
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.sugarblast.game
+    scripts:
+      - name: Install JS deps
+        script: npm ci
+
+      - name: Oyun motorunun testleri
+        # tests/ altinda 4 .test.js dosyasi var (dogrulandi).
+        # Kirmizi paket paketlenmemeli: cozulemeyen bir tahta oyuncuya
+        # "bozuk oyun" olarak okunur.
+        script: npm test
+
+      - name: Build numarasini ASC'den belirle
+        script: |
+          set -e
+          # Build numarasi TAHMIN EDILMEZ. App kaydi yeni oldugu icin
+          # ASC'de build olmayabilir; o durumda 0'dan baslar.
+          SON=$(app-store-connect get-latest-testflight-build-number \
+                  --bundle-id "$BUNDLE_ID" 2>/dev/null || echo 0)
+          [ -z "$SON" ] && SON=0
+          YENI=$((SON + 1))
+          echo "ASC'deki en yuksek TestFlight build: $SON  ->  bu build: $YENI"
+          node -e '
+            const fs=require("fs"); const d=JSON.parse(fs.readFileSync("app.json","utf8"));
+            d.expo.ios = d.expo.ios || {};
+            d.expo.ios.buildNumber = process.argv[1];
+            fs.writeFileSync("app.json", JSON.stringify(d,null,2));
+            console.log("app.json -> version", d.expo.version, "buildNumber", d.expo.ios.buildNumber);
+          ' "$YENI"
+
+      - name: Expo prebuild (iOS)
+        script: npx expo prebuild --platform ios --clean --no-install
+
+      - name: CocoaPods
+        script: cd ios && pod install
+
+      - name: KANIT — sema ve surum
+        script: |
+          set -e
+          echo "===== xcworkspace ====="; ls -d ios/*.xcworkspace
+          xcodebuild -workspace ios/*.xcworkspace -list || true
+          find ios -name Info.plist -maxdepth 3 -exec sh -c \
+            'echo "-- $1"; /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1" 2>/dev/null; /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$1" 2>/dev/null' _ {} \;
+
+      - name: Sifreleme beyani
+        # app.json'da zaten false, ama prebuild'in urettigi Info.plist'te
+        # oldugunu KANITLA: eksikse build ASC'ye duser ve TestFlight'ta
+        # MISSING_EXPORT_COMPLIANCE ile SESSIZCE takilir.
+        script: |
+          set -e
+          for f in $(find ios -name Info.plist -maxdepth 3); do
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$f" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$f"
+            echo "$f -> $(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$f")"
+          done
+
+      - name: Set up code signing
+        script: |
+          set -e
+          keychain initialize
+          keychain add-certificates
+          xcode-project use-profiles
+          echo "===== KANIT - hangi profille imzalaniyor ====="
+          find "$HOME" -maxdepth 2 -name "export_options.plist" -exec cat {} + || true
+
+      - name: Build IPA
+        script: |
+          set -e
+          WS=$(ls -d ios/*.xcworkspace | head -1)
+          SEMA=$(basename "$WS" .xcworkspace)
+          echo "workspace=$WS  sema=$SEMA"
+          xcode-project build-ipa --workspace "$WS" --scheme "$SEMA"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      # Patlayan build ASC'ye iz BIRAKMAZ -> e-posta olmazsa ariza sessiz kalir.
+      email:
+        recipients:
+          - gurbuzer1@gmail.com
+        notify:
+          success: true
+          failure: true
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
+  # ─────────────────────────────────────────────────────────────────────
+  # AD HOC — App Store Connect app kaydi GEREKTIRMEZ.
+  # Kayit acilana kadar bu oyunu telefona koymanin tek yolu.
+  # IPA hesaba kayitli 2 iPhone'a imzalanir, e-postadaki "Install"
+  # baglantisi telefondan acilinca kurulur.
+  ios-adhoc:
+    name: iOS Ad Hoc (telefona dogrudan kurulum)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      ios_signing:
+        provisioning_profiles:
+          - sugarblast-adhoc
+        certificates:
+          - caniai-distribution
+      # Capacitor/Expo CLI'lari Node >=22 istiyor; ScoreLens build #1 tam
+      # burada "requires NodeJS >=22.0.0" ile 50 saniyede patlamisti.
+      node: 22
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.sugarblast.game
+    scripts:
+      - name: Install JS deps
+        script: npm ci
+
+      - name: Oyun motorunun testleri
+        # tests/ altinda 4 .test.js dosyasi var (dogrulandi).
+        # Kirmizi paket paketlenmemeli: cozulemeyen bir tahta oyuncuya
+        # "bozuk oyun" olarak okunur.
+        script: npm test
+
+      - name: Build numarasi (Ad Hoc)
+        script: |
+          set -e
+          # ASC'de app kaydi YOK -> oradan build numarasi okunamaz.
+          # Codemagic'in kendi sayaci yeter; bu paket magazaya gitmiyor.
+          YENI="$BUILD_NUMBER"
+          echo "Ad Hoc build numarasi (Codemagic sayaci): $YENI"
+          node -e '
+            const fs=require("fs"); const d=JSON.parse(fs.readFileSync("app.json","utf8"));
+            d.expo.ios = d.expo.ios || {};
+            d.expo.ios.buildNumber = process.argv[1];
+            fs.writeFileSync("app.json", JSON.stringify(d,null,2));
+            console.log("app.json -> version", d.expo.version, "buildNumber", d.expo.ios.buildNumber);
+          ' "$YENI"
+
+      - name: Expo prebuild (iOS)
+        script: npx expo prebuild --platform ios --clean --no-install
+
+      - name: CocoaPods
+        script: cd ios && pod install
+
+      - name: KANIT — sema ve surum
+        script: |
+          set -e
+          echo "===== xcworkspace ====="; ls -d ios/*.xcworkspace
+          xcodebuild -workspace ios/*.xcworkspace -list || true
+          find ios -name Info.plist -maxdepth 3 -exec sh -c \
+            'echo "-- $1"; /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1" 2>/dev/null; /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$1" 2>/dev/null' _ {} \;
+
+      - name: Sifreleme beyani
+        # app.json'da zaten false, ama prebuild'in urettigi Info.plist'te
+        # oldugunu KANITLA: eksikse build ASC'ye duser ve TestFlight'ta
+        # MISSING_EXPORT_COMPLIANCE ile SESSIZCE takilir.
+        script: |
+          set -e
+          for f in $(find ios -name Info.plist -maxdepth 3); do
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$f" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$f"
+            echo "$f -> $(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$f")"
+          done
+
+      - name: Set up code signing
+        script: |
+          set -e
+          keychain initialize
+          keychain add-certificates
+          xcode-project use-profiles
+          echo "===== KANIT - hangi profille imzalaniyor ====="
+          find "$HOME" -maxdepth 2 -name "export_options.plist" -exec cat {} + || true
+
+      - name: Build IPA
+        script: |
+          set -e
+          WS=$(ls -d ios/*.xcworkspace | head -1)
+          SEMA=$(basename "$WS" .xcworkspace)
+          echo "workspace=$WS  sema=$SEMA"
+          xcode-project build-ipa --workspace "$WS" --scheme "$SEMA"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      # Build bitince gelen e-postadaki "Install" baglantisi TELEFONDAN acilir.
+      # App Store Connect'e HIC UGRAMAZ.
+      email:
+        recipients:
+          - gurbuzer1@gmail.com
+        notify:
+          success: true
+          failure: true
