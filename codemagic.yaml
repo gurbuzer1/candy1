@@ -65,7 +65,12 @@ workflows:
           SON=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" 2>&1 || echo "OKUNAMADI")
           echo "ham cikti: '$SON'"
           case "$SON" in
-            *"not found"*|*"No builds"*|"") echo "ASC hic build bildirmedi -> ilk build"; SON=0 ;;
+            # ⚠️ BU DESEN BIR KEZ TAHMINDI VE UC BUILD'I PATLATTI. CLI'nin
+            # gercek ciktisi OLCULDU, birebir:
+            #   "Did not find latest build for app 6804245420"
+            # Ben "not found" / "No builds" yazmistim; ikisi de tutmuyor.
+            # Kapi dogru calisiyordu, YANLIS SEYI hata sayiyordu.
+            *"not find"*|*"not found"*|*"No builds"*|"") echo "ASC hic build bildirmedi -> ilk build"; SON=0 ;;
             OKUNAMADI|*[!0-9]*) echo "⛔ ASC'den gecerli build numarasi OKUNAMADI: '$SON'"; exit 1 ;;
           esac
           YENI=$((SON + 1))
