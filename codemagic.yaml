@@ -40,6 +40,7 @@ workflows:
       cocoapods: default
       vars:
         BUNDLE_ID: com.sugarblast.game
+        ASC_APP_ID: "6804244443"
     scripts:
       - name: Install JS deps
         script: npm ci
@@ -53,13 +54,22 @@ workflows:
       - name: Build numarasini ASC'den belirle
         script: |
           set -e
-          # Build numarasi TAHMIN EDILMEZ. App kaydi yeni oldugu icin
-          # ASC'de build olmayabilir; o durumda 0'dan baslar.
-          SON=$(app-store-connect get-latest-testflight-build-number \
-                  --bundle-id "$BUNDLE_ID" 2>/dev/null || echo 0)
-          [ -z "$SON" ] && SON=0
+          # ⚠️ BURASI IKI KUSUR TASIYORDU, IKISI DE SESSIZDI.
+          # 1) `--bundle-id` bu CLI'da YOK; komut konumsal APP ID ister.
+          #    Bayrak yanlis olunca komut "unrecognized arguments" ile patlar.
+          # 2) `2>/dev/null || echo 0` o patlamayi YUTUYORDU: her build 1
+          #    numarasini alirdi. MindMirror'da tam bu oldu -- ASC'de 14 build
+          #    varken binary v1 damgalandi ve yukleme reddedildi.
+          # Artik "hic build yok" (dogru, ilk build) ile "okunamadi" (hata)
+          # AYIRT EDILIYOR; ikincisinde build DURUR.
+          SON=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" 2>&1 || echo "OKUNAMADI")
+          echo "ham cikti: '$SON'"
+          case "$SON" in
+            *"not found"*|*"No builds"*|"") echo "ASC hic build bildirmedi -> ilk build"; SON=0 ;;
+            OKUNAMADI|*[!0-9]*) echo "⛔ ASC'den gecerli build numarasi OKUNAMADI: '$SON'"; exit 1 ;;
+          esac
           YENI=$((SON + 1))
-          echo "ASC'deki en yuksek TestFlight build: $SON  ->  bu build: $YENI"
+          echo "ASC en yuksek: $SON  ->  bu build: $YENI"
           node -e '
             const fs=require("fs"); const d=JSON.parse(fs.readFileSync("app.json","utf8"));
             d.expo.ios = d.expo.ios || {};
@@ -147,6 +157,7 @@ workflows:
       cocoapods: default
       vars:
         BUNDLE_ID: com.sugarblast.game
+        ASC_APP_ID: "6804244443"
     scripts:
       - name: Install JS deps
         script: npm ci
