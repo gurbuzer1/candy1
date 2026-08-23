@@ -48,7 +48,7 @@ export default function LevelSelectScreen({ save, onSelectLevel, onBack, onOpenS
 
       {noLivesFlash && (
         <View style={styles.noLivesPill}>
-          <Text style={styles.noLivesText}>Out of lives — wait for regen or buy a refill</Text>
+          <Text style={styles.noLivesText}>Out of lives — a life comes back every 20 minutes</Text>
         </View>
       )}
 

@@ -594,8 +594,8 @@ export default function App() {
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Out of Lives</Text>
             <Text style={styles.modalBody}>
-              You need 1 life to start a level. Wait for a life to refill (up to {LIVES_MAX}),
-              or buy a refill from the shop.
+              You need 1 life to start a level. A life comes back every 20 minutes,
+              up to {LIVES_MAX}. The shop sells boosters, not lives.
             </Text>
             <TouchableOpacity
               style={styles.modalBtn}
