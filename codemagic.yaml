@@ -23,6 +23,14 @@
 workflows:
   ios-testflight:
     name: iOS → TestFlight
+    triggering:
+      # Etiketle tetiklenir: `git tag build-3 && git push origin build-3`
+      # PUSH ile tetiklenmiyor -- her commit'te build ucretsiz dakikalari yakar.
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'build-*'
+          include: true
     instance_type: mac_mini_m2
     max_build_duration: 60
     integrations:
